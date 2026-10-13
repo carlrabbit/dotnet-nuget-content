@@ -16,6 +16,12 @@
 - Treat path case/normalization and traversal protection as platform-sensitive. Reject Zip Slip payloads and symlink escapes where relevant.
 - No network access or feed credentials are needed for the first slice.
 
+## Trusted-package boundary
+
+- Inputs are trusted NuGet content packages originating from known or controlled sources; adversarial/untrusted archive processing is not a supported product scenario.
+- Retain existing protections against path traversal, symlink escape where relevant, duplicate/conflicting entries, accidental overwrite, and partial outputs. Malformed inputs must still fail predictably with actionable diagnostics.
+- General-purpose defenses against hostile archive resource exhaustion, including ZIP-bomb detection, configurable extraction quotas, and archive resource limits, are **not required**. Do not add these as part of M0001 corrections.
+
 ## Required validation approach
 
 - Test actual package creation and extraction using nontrivial nested text and binary fixtures, checking byte-for-byte content and computed hashes.
