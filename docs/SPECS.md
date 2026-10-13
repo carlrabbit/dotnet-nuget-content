@@ -8,7 +8,8 @@ Manage arbitrary, long-lived content—especially test data and external binary 
 
 - A content package is a complete versioned snapshot. Never silently overwrite the same published package ID/version.
 - Default package layout uses `contentFiles/any/any/<relative-content-path>`, with `.nuspec` `contentFiles` declaration selecting `buildAction=None`, `copyToOutput=true`, `flatten=false`.
-- Preserve relative directories and binary bytes exactly. Reject unsafe archive paths (absolute, traversal, escapes) and duplicate/conflicting entries. Do not treat archives as trusted input.
+- Preserve relative directories and binary bytes exactly. Reject unsafe archive paths (absolute, traversal, escapes) and duplicate/conflicting entries.
+- **Supported input trust boundary:** package inputs are trusted packages from known/controlled sources. Processing adversarial or untrusted packages is outside the supported product contract. This does not relax the required path-safety, duplicate/conflict, no-overwrite, or malformed-input failure behavior.
 - Ordinary workflows require no manifest. Optional configuration/hash expectations may be supported later, without making it a dependency for basic usage.
 - CLI is noninteractive for automation, with deterministic exit behavior and clear stdout/stderr ownership. Input paths are resolved relative to invocation working directory unless explicitly stated otherwise.
 - Existing package versions remain immutable; repacking a modified working directory produces a new version.
