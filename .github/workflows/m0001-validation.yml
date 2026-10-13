@@ -14,7 +14,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 11.0.100-rc.1.26425.128
-          dotnet-quality: preview
       - name: Record SDK and RID
         run: |
           dotnet --info

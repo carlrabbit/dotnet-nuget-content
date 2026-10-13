@@ -122,7 +122,33 @@ Implementation agent owns complete closure: reread milestone and ledger; verify 
 
 ## Completion Evidence
 
-Implementation-owned: populate only after successful final reconciliation. Trace each `AC-*`, `DOC-*`, `ART-*`, and material `EC-*` to concrete evidence, validation gate/target and result.
+Implementation completed on branch `codex/m0001-native-content-package` (implementation commit `44de004`; ledger/audit follow-up is recorded in the pull request). Evidence is criterion-specific:
+
+| ID | Implementation and executed evidence | Result |
+|---|---|---|
+| AC-01 | `DotnetNugetContent.sln`, `src/DotnetNugetContent/DotnetNugetContent.csproj` (`net11.0`, `PublishAot=true`), authority documents and root README; VAL-01 build/test on SDK `11.0.100-rc.1.26425.128`. | Complete |
+| AC-02 | `Program.cs` implements help/version, `pack`, `unpack`, `hash`, strict option parsing, exit codes 0/1/2, and stderr errors; `CliHelpVersionAndExpectedHashHaveStableExitBehavior` and native CLI invocation in VAL-04. | Complete |
+| AC-03 | `ContentPackages.PackAsync` and `UnpackAsync`; VAL-02 compares nested UTF-8 text and binary byte arrays at the original relative paths. VAL-04 independently repeated pack/unpack using the native executable. | Complete |
+| AC-04 | Package `contentFiles` entries use `buildAction=None`, `copyToOutput=true`, and `flatten=false`; VAL-03 generated an isolated `net11.0` consumer, restored the local feed, built it, and compared output bytes. Text SHA-256 `80708E852F8DAECDA67CB59ECC583E83734EEC8581784FB49319F1B9FCA6BA9F`; binary SHA-256 `F103C95A021522160E6BA79358839FC33B40916D671AFD205C7386EBDEE8CBAF`. | Complete |
+| AC-05 | `Sha256Async` supports file/package hashes; `hash --expect` and `unpack --sha256` reject mismatch. VAL-01 verified a wrong expected hash returns 2, writes the mismatch to stderr, and writes no success hash to stdout. | Complete |
+| AC-06 | Pack/unpack reject invalid identities/versions, malformed ZIP packages, traversal paths, duplicate entries, existing package outputs, and existing extraction destinations. VAL-01 ran each corresponding test and confirmed existing files and paths remain unchanged. | Complete |
+| AC-07 | VAL-04 GitHub Actions [run 38453490827](https://github.com/carlrabbit/dotnet-nuget-content/actions/runs/38453490827) published on Windows Server 2025 for `win-x64` using SDK `11.0.100-rc.1.26425.128`, invoked native help/version and package round-trip, then uploaded the executable. Size: 9,487,872 bytes. Publish emitted only the SDK preview informational message; no AOT or trimming warnings were reported. | Complete |
+| AC-08 | Preferred `NuGet.Packaging` 7.9.0 package builder/reader passed the Native AOT publish and runtime pack/unpack checks in VAL-05 / CI run 38453490827. The authorized `dotnet pack` fallback condition was not met; EC-08b is `not-applicable`. | Complete |
+| DOC-01 | README documents commands, runtime/distribution expectations, and implemented scope; `docs/ENGINEERING.md` records backend and validation profile. Content matches observed gates. | Complete |
+| ART-01 | `.execution/M0001-initialization.md` has criterion-specific evidence and gate results. This audit maps every criterion and distinct evidence case to executed proof. | Complete |
+
+### Evidence case audit
+
+- **EC-03a:** VAL-02 and VAL-03 confirm nested text paths and bytes; VAL-03 records the text hash above.
+- **EC-03b:** VAL-02 and VAL-03 confirm arbitrary binary paths and bytes; VAL-03 records the binary hash above.
+- **EC-07a:** The published native executable returned success for `--help` and `--version`; version output was `0.1.0`.
+- **EC-07b:** The published native executable created and extracted a package with nested UTF-8 text and binary data; both byte comparisons passed.
+- **EC-08a:** The preferred `NuGet.Packaging` backend built under Native AOT and executed package creation and reading successfully.
+- **EC-08b:** Not applicable because EC-08a succeeded; no fallback was attempted or represented as executed.
+
+### Completion audit
+
+The milestone and ledger have identical obligation IDs: `AC-01` through `AC-08`, `DOC-01`, and `ART-01`. Their evidence-case registries both contain `EC-03a`, `EC-03b`, `EC-07a`, `EC-07b`, `EC-08a`, and `EC-08b`. VAL-01 through VAL-06 are individually reconciled in the execution ledger. All obligations are complete; the sole conditional evidence case, EC-08b, is explicitly not-applicable because the preferred backend passed.
 
 ## Escalation Boundary
 
