@@ -37,14 +37,15 @@ jobs:
           $source = Join-Path $work 'source'
           New-Item -ItemType Directory -Force -Path (Join-Path $source 'nested') | Out-Null
           $bytes = [byte[]](0, 255, 1, 128, 13, 10, 0, 42)
+          $textBytes = [System.Text.Encoding]::UTF8.GetBytes('native round-trip')
           [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $bytes)
-          Set-Content -NoNewline (Join-Path $source 'nested/readme.txt') 'native round-trip'
+          [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/readme.txt'), $textBytes)
           & $exe pack --id dnc.native.validation --version 1.0.0 --source $source --output (Join-Path $work 'feed/dnc.native.validation.1.0.0.nupkg')
           if ($LASTEXITCODE -ne 0) { throw 'Native pack failed.' }
           & $exe unpack --package (Join-Path $work 'feed/dnc.native.validation.1.0.0.nupkg') --destination (Join-Path $work 'output')
           if ($LASTEXITCODE -ne 0) { throw 'Native unpack failed.' }
           if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $work 'output/nested/payload.bin'))) -ne [Convert]::ToHexString($bytes)) { throw 'Native binary round-trip differs.' }
-          if ((Get-Content (Join-Path $work 'output/nested/readme.txt') -Raw) -ne 'native round-trip') { throw 'Native text round-trip differs.' }
+          if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $work 'output/nested/readme.txt'))) -ne [Convert]::ToHexString($textBytes)) { throw 'Native text round-trip differs.' }
           Get-Item $exe | Select-Object FullName,Length
       - name: Upload Native AOT executable
         uses: actions/upload-artifact@v4
