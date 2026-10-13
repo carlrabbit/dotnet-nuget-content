@@ -25,9 +25,9 @@ Planner-seeded coverage registry. Implementation owns work packages, evidence, p
 |---|---|---|---|---|---|
 | EC-03a | AC-03 | Nested text files retain bytes and paths | VAL-02 | `PackageLifecycleTests.PackAndUnpackPreserveNestedTextAndBinaryBytes`; VAL-03 consumer text SHA-256 `80708E852F8DAECDA67CB59ECC583E83734EEC8581784FB49319F1B9FCA6BA9F` | done |
 | EC-03b | AC-03 | Non-text binary files retain bytes and paths | VAL-02 | `PackageLifecycleTests.PackAndUnpackPreserveNestedTextAndBinaryBytes`; VAL-03 consumer binary SHA-256 `F103C95A021522160E6BA79358839FC33B40916D671AFD205C7386EBDEE8CBAF` | done |
-| EC-07a | AC-07 | Native published executable launches and serves help/version | VAL-04 | CI run 38453490827; `--help` and `--version` both succeeded; version `0.1.0` | done |
-| EC-07b | AC-07 | Native published executable performs package round-trip | VAL-04 | CI run 38453490827; native `pack`/`unpack` preserved nested UTF-8 text and binary bytes | done |
-| EC-08a | AC-08 | Preferred AOT+NuGet.Packaging path receives actual build and execution evidence | VAL-05 | CI run 38453490827 published and invoked the native executable; NuGet.Packaging backend created/read the tested package | done |
+| EC-07a | AC-07 | Native published executable launches and serves help/version | VAL-04 | Final PR CI run 38453994935; `--help` and `--version` both succeeded; version `0.1.0` | done |
+| EC-07b | AC-07 | Native published executable performs package round-trip | VAL-04 | Final PR CI run 38453994935; native `pack`/`unpack` preserved nested UTF-8 text and binary bytes | done |
+| EC-08a | AC-08 | Preferred AOT+NuGet.Packaging path receives actual build and execution evidence | VAL-05 | Final PR CI run 38453994935 published and invoked the native executable; NuGet.Packaging backend created/read the tested package | done |
 | EC-08b | AC-08 | If preferred path fails, SDK fallback is exercised and its runtime prerequisite documented | VAL-05 | not-applicable: preferred NuGet.Packaging AOT path passed build and runtime smoke evidence (EC-08a) | not-applicable |
 
 ## Work Packages
@@ -47,7 +47,7 @@ Planner-seeded coverage registry. Implementation owns work packages, evidence, p
 | VAL-01 | `dotnet test --configuration Release` focused CLI/filesystem tests | CLI parser and filesystem behavior; local Windows / .NET 11 RC SDK 11.0.100-rc.1.26425.128 | AC-02, AC-05, AC-06 | done | 6 passed, 0 failed; package and hash failure diagnostics asserted |
 | VAL-02 | `dotnet test --configuration Release` package integration suite | Actual content package round-trip; local Windows / .NET 11 RC SDK | EC-03a, EC-03b | done | nested UTF-8 text and arbitrary binary bytes/paths compared exactly; generated nuspec metadata asserted |
 | VAL-03 | `pwsh -NoProfile -File scripts/validate-consumer.ps1` | Fresh isolated consumer, local package feed / .NET 11 RC SDK | AC-04 | done | restore/build succeeded; nested output bytes match; text SHA-256 `80708E852F8DAECDA67CB59ECC583E83734EEC8581784FB49319F1B9FCA6BA9F`; binary SHA-256 `F103C95A021522160E6BA79358839FC33B40916D671AFD205C7386EBDEE8CBAF` |
-| VAL-04 | `dotnet publish -c Release -r win-x64 --self-contained true`, invoke artifact | Windows Server 2025 GitHub-hosted runner; .NET 11 RC SDK 11.0.100-rc.1.26425.128 | EC-07a, EC-07b | done | CI PR run 38453490827 passed; executable 9,487,872 bytes; help/version and native pack/unpack passed; no AOT/trim warnings |
+| VAL-04 | `dotnet publish -c Release -r win-x64 --self-contained true`, invoke artifact | Windows Server 2025 GitHub-hosted runner; .NET 11 RC SDK 11.0.100-rc.1.26425.128 | EC-07a, EC-07b | done | Final CI PR run 38453994935 passed; executable 9,487,872 bytes; help/version and native pack/unpack passed; no AOT/trim warnings |
 | VAL-05 | Native AOT publish plus preferred backend pack/unpack smoke | Windows x64 native compiler host in GitHub Actions | EC-08a, EC-08b | done | `NuGet.Packaging` 7.9.0 path compiled and ran; fallback condition not met and EC-08b is not-applicable |
 | VAL-06 | Review delivered docs, ledger, and evidence registry | Repository authority and obligation closure | AC-01, DOC-01, ART-01 | done | milestone and ledger obligation IDs and evidence-case IDs reconciled exactly; criterion-specific trace recorded in milestone |
 
