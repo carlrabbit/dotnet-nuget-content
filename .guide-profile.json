@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "guideSystemVersion": "0.9.1",
+  "repositoryRole": "product",
+  "maturityStage": "initialization",
+  "appliedProfiles": [
+    {
+      "id": "base",
+      "version": "0.9.1",
+      "scopes": [
+        {
+          "kind": "repository"
+        }
+      ]
+    },
+    {
+      "id": "cli-tool",
+      "version": "0.9.1",
+      "scopes": [
+        {
+          "kind": "repository"
+        }
+      ]
+    }
+  ]
+}
