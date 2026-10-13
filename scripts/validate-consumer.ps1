@@ -1,19 +1,45 @@
+param(
+    [string] $NativeExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/win-x64/dotnet-nuget-content.exe')
+)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $repoRoot 'src/DotnetNugetContent/DotnetNugetContent.csproj'
-$work = Join-Path ([System.IO.Path]::GetTempPath()) ('dotnet-nuget-content-consumer-' + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([System.IO.Path]::GetTempPath()) ('dotnet nuget content consumer-' + [guid]::NewGuid().ToString('N'))
 $feed = Join-Path $work 'feed'
 $source = Join-Path $work 'source'
 $consumer = Join-Path $work 'consumer'
 $packageId = 'dnc.consumer.validation'
 $version = '1.0.0'
 $package = Join-Path $feed "$packageId.$version.nupkg"
-$cliDll = Join-Path $repoRoot 'src/DotnetNugetContent/bin/Release/net11.0/dotnet-nuget-content.dll'
+
+if (-not (Test-Path -LiteralPath $NativeExecutable -PathType Leaf)) {
+    throw "Native executable not found: $NativeExecutable. Run scripts/validate-native.ps1 first."
+}
+$nativePath = (Resolve-Path -LiteralPath $NativeExecutable).Path
 
 function Invoke-Dotnet([string[]] $Arguments) {
     & dotnet @Arguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE" }
+}
+
+function Invoke-NativeCli([string[]] $Arguments) {
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $nativePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Stdout = $stdoutTask.GetAwaiter().GetResult()
+        Stderr = $stderrTask.GetAwaiter().GetResult()
+    }
 }
 
 try {
@@ -23,8 +49,10 @@ try {
     [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/deeper/data.txt'), $textBytes)
     [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $binaryBytes)
 
-    Invoke-Dotnet @('build', $project, '--configuration', 'Release')
-    Invoke-Dotnet @($cliDll, 'pack', '--id', $packageId, '--version', $version, '--source', $source, '--output', $package)
+    $packResult = Invoke-NativeCli @('pack', '--id', $packageId, '--version', $version, '--source', $source, '--output', $package)
+    if ($packResult.ExitCode -ne 0 -or $packResult.Stderr -ne '' -or $packResult.Stdout.Trim() -ne "Created $package") {
+        throw "Native pack failed in consumer validation (exit $($packResult.ExitCode)). stdout: $($packResult.Stdout) stderr: $($packResult.Stderr)"
+    }
 
     @"
 <Project Sdk="Microsoft.NET.Sdk">
@@ -49,7 +77,8 @@ try {
     if ([Convert]::ToHexString($actualText) -ne [Convert]::ToHexString($textBytes)) { throw 'Consumer text content differs from the packaged source.' }
     if ([Convert]::ToHexString($actualBinary) -ne [Convert]::ToHexString($binaryBytes)) { throw 'Consumer binary content differs from the packaged source.' }
 
-    Write-Output "Consumer validation passed: $package"
+    Write-Output "Consumer validation passed using native executable: $nativePath"
+    Write-Output "Consumer package: $package"
     Write-Output "Text SHA-256: $([Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($actualText)))"
     Write-Output "Binary SHA-256: $([Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($actualBinary)))"
 }

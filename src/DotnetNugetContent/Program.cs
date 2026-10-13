@@ -40,10 +40,10 @@ internal static class Cli
                 case "hash":
                     EnsureOptions(options, "path", "expect");
                     var path = Path.GetFullPath(Required(options, "path"));
-                    if (!File.Exists(path)) throw new CliException($"File not found: {path}");
+                    if (!File.Exists(path)) throw new CliException($"File not found: {path}", 1);
                     var hash = await ContentPackages.Sha256Async(path);
                     if (options.TryGetValue("expect", out var expected) && !ContentPackages.HashEquals(hash, expected))
-                        throw new CliException($"SHA-256 mismatch for '{path}'. Expected {expected}; actual {hash}.");
+                        throw new CliException($"SHA-256 mismatch for '{path}'. Expected {expected}; actual {hash}.", 1);
                     Console.Out.WriteLine(hash);
                     return 0;
                 default:
@@ -53,7 +53,7 @@ internal static class Cli
         catch (CliException ex)
         {
             Console.Error.WriteLine($"error: {ex.Message}");
-            return 2;
+            return ex.ExitCode;
         }
         catch (Exception ex)
         {
@@ -101,7 +101,10 @@ internal static class Cli
         """;
 }
 
-internal sealed class CliException(string message) : Exception(message);
+internal sealed class CliException(string message, int exitCode = 2) : Exception(message)
+{
+    public int ExitCode { get; } = exitCode;
+}
 
 internal static class ContentPackages
 {
@@ -115,15 +118,15 @@ internal static class ContentPackages
             throw new CliException($"Invalid exact NuGet version '{versionText}'.");
 
         var source = Path.GetFullPath(sourcePath);
-        if (!Directory.Exists(source)) throw new CliException($"Source directory not found: {source}");
+        if (!Directory.Exists(source)) throw new CliException($"Source directory not found: {source}", 1);
         RejectReparsePoints(source);
         var output = Path.GetFullPath(outputPath);
-        if (!output.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Output path must end in .nupkg.");
-        if (File.Exists(output) || Directory.Exists(output)) throw new CliException($"Output already exists: {output}");
+        if (!output.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Output path must end in .nupkg.", 1);
+        if (File.Exists(output) || Directory.Exists(output)) throw new CliException($"Output already exists: {output}", 1);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
         var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal).ToArray();
-        if (files.Length == 0) throw new CliException("Source directory must contain at least one file.");
+        if (files.Length == 0) throw new CliException("Source directory must contain at least one file.", 1);
         var builder = new PackageBuilder
         {
             Id = id,
@@ -164,15 +167,15 @@ internal static class ContentPackages
     public static async Task UnpackAsync(string packagePath, string destinationPath, string? expectedHash)
     {
         var package = Path.GetFullPath(packagePath);
-        if (!File.Exists(package)) throw new CliException($"Package not found: {package}");
+        if (!File.Exists(package)) throw new CliException($"Package not found: {package}", 1);
         if (expectedHash is not null)
         {
             var actualHash = await Sha256Async(package);
-            if (!HashEquals(actualHash, expectedHash)) throw new CliException($"SHA-256 mismatch. Expected {expectedHash}; actual {actualHash}.");
+            if (!HashEquals(actualHash, expectedHash)) throw new CliException($"SHA-256 mismatch. Expected {expectedHash}; actual {actualHash}.", 1);
         }
 
         var destination = Path.GetFullPath(destinationPath);
-        if (File.Exists(destination) || Directory.Exists(destination)) throw new CliException($"Destination already exists: {destination}");
+        if (File.Exists(destination) || Directory.Exists(destination)) throw new CliException($"Destination already exists: {destination}", 1);
         var parent = Path.GetDirectoryName(destination)!;
         Directory.CreateDirectory(parent);
         var staging = Path.Combine(parent, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
@@ -183,32 +186,32 @@ internal static class ContentPackages
             using var nuspecStream = archive.GetNuspec();
             var nuspec = new NuspecReader(nuspecStream);
             if (string.IsNullOrWhiteSpace(nuspec.GetId()) || !NuGetVersion.TryParse(nuspec.GetVersion().ToString(), out _))
-                throw new CliException("Package has invalid NuGet identity metadata.");
+                throw new CliException("Package has invalid NuGet identity metadata.", 1);
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var archivePath in archive.GetFiles())
             {
                 var normalized = archivePath.Replace('\\', '/');
                 ValidateArchivePath(normalized);
-                if (!seen.Add(normalized)) throw new CliException($"Package contains duplicate path '{normalized}'.");
+                if (!seen.Add(normalized)) throw new CliException($"Package contains duplicate path '{normalized}'.", 1);
                 if (!normalized.StartsWith(ContentPrefix, StringComparison.Ordinal)) continue;
                 var relative = normalized[ContentPrefix.Length..];
                 ValidateRelativePath(relative);
                 var target = Path.GetFullPath(Path.Combine(staging, relative.Replace('/', Path.DirectorySeparatorChar)));
                 if (!target.StartsWith(staging.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    throw new CliException($"Unsafe package path '{normalized}'.");
+                    throw new CliException($"Unsafe package path '{normalized}'.", 1);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 await using var input = await archive.GetStreamAsync(archivePath, CancellationToken.None);
                 await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 await input.CopyToAsync(output);
             }
             if (!Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories).Any())
-                throw new CliException("Package contains no contentFiles/any/any payload.");
+                throw new CliException("Package contains no contentFiles/any/any payload.", 1);
             Directory.Move(staging, destination);
         }
-        catch (Exception ex) when (ex is InvalidDataException or NuGet.Packaging.Core.PackagingException)
+        catch (Exception ex) when (ex is InvalidDataException or NuGet.Packaging.Core.PackagingException or System.Xml.XmlException)
         {
-            throw new CliException($"Invalid NuGet package: {ex.Message}");
+            throw new CliException("Invalid NuGet package.", 1);
         }
         finally
         {
@@ -230,20 +233,20 @@ internal static class ContentPackages
     {
         foreach (var entry in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories).Prepend(root))
             if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
-                throw new CliException($"Symbolic links and reparse points are not allowed in the source: {entry}");
+                throw new CliException($"Symbolic links and reparse points are not allowed in the source: {entry}", 1);
     }
 
     private static void ValidateArchivePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || path.StartsWith('/', StringComparison.Ordinal) || path.Contains(':') ||
             path.Split('/').Any(part => part is ".." or "." || part.Length == 0))
-            throw new CliException($"Unsafe package path '{path}'.");
+            throw new CliException($"Unsafe package path '{path}'.", 1);
     }
 
     private static void ValidateRelativePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path) || path.Contains(':') ||
             path.Replace('\\', '/').Split('/').Any(part => part is ".." or "." || part.Length == 0))
-            throw new CliException($"Unsafe content path '{path}'.");
+            throw new CliException($"Unsafe content path '{path}'.", 1);
     }
 }

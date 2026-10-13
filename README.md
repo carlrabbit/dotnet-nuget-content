@@ -16,16 +16,15 @@ dotnet-nuget-content hash --path ./feed/sample.data.1.0.0.nupkg
 dotnet-nuget-content hash --path ./content/file.bin --expect <expected-file-sha256>
 ```
 
-Package IDs and exact NuGet versions are required. Packing an existing package path or extracting to an existing destination fails without replacing it. Unpack validates archive paths and duplicate entries, stages extraction before creating the destination, and rejects a supplied package hash that does not match. File and package hashes use SHA-256. Successful commands return 0, malformed command input returns 2, and operation failures return 1; errors are written to stderr.
+Package IDs and exact NuGet versions are required. Packing an existing package path or extracting to an existing destination fails without replacing it. Unpack validates archive paths and duplicate entries, stages extraction before creating the destination, and rejects malformed packages or a supplied package hash that does not match. File and package hashes use SHA-256. Successful commands return 0, malformed command input returns 2, and operation failures return 1; errors are written to stderr and successful results are written to stdout.
 
 ## Build and validation
 
 ```powershell
 dotnet test --configuration Release
-pwsh -NoProfile -File scripts/validate-consumer.ps1
-dotnet publish src/DotnetNugetContent/DotnetNugetContent.csproj -c Release -r win-x64 --self-contained true -o artifacts/win-x64
+pwsh -NoProfile -File scripts/validate-native.ps1
 ```
 
-The consumer validation creates an isolated .NET 11 project and local package source, restores a `PackageReference`, builds it, and compares nested text and binary output bytes. Native AOT publishing requires the platform prerequisites described by [.NET Native AOT deployment](https://learn.microsoft.com/dotnet/core/deploying/native-aot/).
+The native validation script publishes a fresh `win-x64` executable, checks process output streams and exit codes, round-trips text and binary files through paths containing spaces, verifies malformed-package and no-partial-output behavior, and invokes `scripts/validate-consumer.ps1` with that same executable. The consumer check creates an isolated .NET 11 project and local package source, restores a `PackageReference`, builds it, and compares nested text and binary output bytes. Native AOT publishing requires the platform prerequisites described by [.NET Native AOT deployment](https://learn.microsoft.com/dotnet/core/deploying/native-aot/).
 
 The initial milestone does not publish to remote feeds, mutate existing package versions, execute packaged binaries, or produce a `dotnet tool` package. See [the product specification](docs/SPECS.md), [engineering contract](docs/ENGINEERING.md), and [M0001 completion evidence](docs/milestones/M0001-initialization.md).

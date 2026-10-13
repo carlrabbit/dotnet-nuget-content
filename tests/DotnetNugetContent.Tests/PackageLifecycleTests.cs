@@ -65,8 +65,27 @@ public sealed class PackageLifecycleTests : IDisposable
 
         var malformed = Path.Combine(_root, "malformed.nupkg");
         await File.WriteAllTextAsync(malformed, "not a ZIP package");
-        await Assert.ThrowsAnyAsync<Exception>(() => ContentPackages.UnpackAsync(malformed, Path.Combine(_root, "malformed-out"), null));
-        Assert.False(Directory.Exists(Path.Combine(_root, "malformed-out")));
+        var malformedOutput = Path.Combine(_root, "malformed-out");
+        var malformedError = await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(malformed, malformedOutput, null));
+        Assert.Equal("Invalid NuGet package.", malformedError.Message);
+        Assert.Equal(1, malformedError.ExitCode);
+        Assert.False(Directory.Exists(malformedOutput));
+
+        var invalidNuspec = Path.Combine(_root, "invalid-nuspec.nupkg");
+        using (var stream = File.Create(invalidNuspec))
+        using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
+        {
+            var nuspec = zip.CreateEntry("invalid.nuspec");
+            await using var writer = new StreamWriter(nuspec.Open());
+            await writer.WriteAsync("<package><metadata>");
+        }
+        var invalidNuspecOutput = Path.Combine(_root, "invalid-nuspec-out");
+        var nuspecError = await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(invalidNuspec, invalidNuspecOutput, null));
+        Assert.Equal("Invalid NuGet package.", nuspecError.Message);
+        Assert.Equal(1, nuspecError.ExitCode);
+        Assert.False(Directory.Exists(invalidNuspecOutput));
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() => ContentPackages.UnpackAsync(null!, Path.Combine(_root, "unexpected-error-out"), null));
     }
 
     [Fact]
@@ -97,8 +116,11 @@ public sealed class PackageLifecycleTests : IDisposable
                 """);
         }
         var outputDirectory = Path.Combine(_root, "duplicate-out");
-        await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(duplicate, outputDirectory, null));
+        var error = await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(duplicate, outputDirectory, null));
+        Assert.Equal("Package contains duplicate path 'contentFiles/any/any/same.txt'.", error.Message);
+        Assert.Equal(1, error.ExitCode);
         Assert.False(Directory.Exists(outputDirectory));
+        Assert.Empty(Directory.EnumerateDirectories(_root, ".duplicate-out.*.tmp"));
     }
 
     [Fact]
@@ -143,9 +165,9 @@ public sealed class PackageLifecycleTests : IDisposable
             output.GetStringBuilder().Clear();
             var file = Path.Combine(_root, "hash.txt");
             await File.WriteAllTextAsync(file, "content");
-            Assert.Equal(2, await Cli.RunAsync(["hash", "--path", file, "--expect", new string('0', 64)]));
+            Assert.Equal(1, await Cli.RunAsync(["hash", "--path", file, "--expect", new string('0', 64)]));
             Assert.Equal(string.Empty, output.ToString());
-            Assert.Contains("SHA-256 mismatch", error.ToString());
+            Assert.Equal($"error: SHA-256 mismatch for '{file}'. Expected {new string('0', 64)}; actual {Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file)))}.{Environment.NewLine}", error.ToString());
             error.GetStringBuilder().Clear();
             Assert.Equal(2, await Cli.RunAsync(["hash", "--path", file, "--typo", "value"]));
             Assert.Contains("Unknown option '--typo'", error.ToString());

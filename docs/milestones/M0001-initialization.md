@@ -127,13 +127,13 @@ Implementation completed on branch `codex/m0001-native-content-package`. All req
 | ID | Implementation and executed evidence | Result |
 |---|---|---|
 | AC-01 | `DotnetNugetContent.sln`, `src/DotnetNugetContent/DotnetNugetContent.csproj` (`net11.0`, `PublishAot=true`), authority documents and root README; VAL-01 local build/test on SDK `11.0.100-rc.1.26425.128`. | Complete |
-| AC-02 | `Program.cs` implements help/version, `pack`, `unpack`, `hash`, strict option parsing, exit codes 0/1/2, and stderr errors; local VAL-01 CLI tests and VAL-04 native help/version invocation passed. | Complete |
-| AC-03 | `ContentPackages.PackAsync` and `UnpackAsync`; local VAL-02 compares nested UTF-8 text and binary byte arrays at the original relative paths, and VAL-04 repeated pack/unpack using the Native AOT executable. | Complete |
-| AC-04 | Package `contentFiles` entries use `buildAction=None`, `copyToOutput=true`, and `flatten=false`; local VAL-03 generated an isolated `net11.0` consumer, restored the local feed, built it, and compared output bytes. Text SHA-256 `80708E852F8DAECDA67CB59ECC583E83734EEC8581784FB49319F1B9FCA6BA9F`; binary SHA-256 `F103C95A021522160E6BA79358839FC33B40916D671AFD205C7386EBDEE8CBAF`. | Complete |
-| AC-05 | `Sha256Async` supports file/package hashes; `hash --expect` and `unpack --sha256` reject mismatch. Local VAL-01 verified a wrong expected hash returns 2, writes the mismatch to stderr, and writes no success hash to stdout. | Complete |
-| AC-06 | Pack/unpack reject invalid identities/versions, malformed ZIP packages, traversal paths, duplicate entries, existing package outputs, and existing extraction destinations. Local VAL-01 ran each corresponding test and confirmed existing files and paths remain unchanged. | Complete |
-| AC-07 | Local VAL-04 published and invoked the `win-x64` Native AOT executable using SDK `11.0.100-rc.1.26425.128`. Size: 9,487,872 bytes; SHA-256 `1C6DC8BCDD5276EC3FA8C8D445162123FC8D13C9A9F9D8C631C14C885B848E1A`. Help/version and native package round-trip passed. No AOT or trimming warnings were emitted; only the SDK preview informational message appeared. | Complete |
-| AC-08 | Preferred `NuGet.Packaging` 7.9.0 package builder/reader passed local Native AOT publish and native pack/unpack checks in VAL-05. The approved `dotnet pack` fallback condition was not met; EC-08b is `not-applicable`. | Complete |
+| AC-02 | `Program.cs` implements help/version, `pack`, `unpack`, `hash`, strict option parsing, and exit codes 0/1/2. VAL-04 captures the real native process streams and verifies help/version, usage-error, success, and operational-failure behavior. | Complete |
+| AC-03 | `ContentPackages.PackAsync` and `UnpackAsync`; local VAL-02 compares nested UTF-8 text and binary byte arrays at original relative paths. VAL-04 performs the same round-trip through the native executable with paths containing spaces. | Complete |
+| AC-04 | Package `contentFiles` entries use `buildAction=None`, `copyToOutput=true`, and `flatten=false`; VAL-03 uses the fresh native executable to pack, then restores/builds an isolated `net11.0` consumer and compares output bytes. Text SHA-256 `80708E852F8DAECDA67CB59ECC583E83734EEC8581784FB49319F1B9FCA6BA9F`; binary SHA-256 `F103C95A021522160E6BA79358839FC33B40916D671AFD205C7386EBDEE8CBAF`. | Complete |
+| AC-05 | `Sha256Async` supports file/package hashes; native VAL-04 verified a correct expected package hash returns 0 and a mismatch returns 1 with stderr diagnostic and empty stdout. | Complete |
+| AC-06 | Pack/unpack reject invalid identities/versions, malformed ZIP and Nuspec packages, traversal paths, duplicate entries, existing package outputs, and existing extraction destinations. VAL-01 asserts typed failures and stable diagnostics; VAL-04 verifies malformed-package process failure, preservation of existing files, and no destination/staging residue after a payload is staged and a later unsafe entry is rejected. | Complete |
+| AC-07 | VAL-04 publishes and invokes a fresh `win-x64` Native AOT executable using SDK `11.0.100-rc.1.26425.128`. Size: 9,487,872 bytes; SHA-256 `9F43ACE7AC1C2091C000BC6C855CE417063A6D0BAB7FACA0AD65A464F350F439`. Process streams, exit semantics, help/version, paths with spaces, and native package round-trip passed. No AOT or trimming warnings were emitted; only the SDK preview informational message appeared. | Complete |
+| AC-08 | Preferred `NuGet.Packaging` 7.9.0 package builder/reader passed fresh local Native AOT publish, native pack/unpack, and native-created NuGet consumer validation. The approved `dotnet pack` fallback condition was not met; EC-08b is `not-applicable`. | Complete |
 | DOC-01 | README documents commands, runtime/distribution expectations, and implemented scope; `docs/ENGINEERING.md` records backend and validation profile. | Complete |
 | ART-01 | `.execution/M0001-initialization.md` records criterion-specific local evidence and gate results. Obligation/evidence registries are reconciled and the completion audit is recorded here. | Complete |
 
@@ -141,9 +141,9 @@ Implementation completed on branch `codex/m0001-native-content-package`. All req
 
 - **EC-03a:** Local VAL-02 and VAL-03 confirm nested text paths and bytes; VAL-03 records the text hash above.
 - **EC-03b:** Local VAL-02 and VAL-03 confirm arbitrary binary paths and bytes; VAL-03 records the binary hash above.
-- **EC-07a:** The locally published native executable returned success for `--help` and `--version`; version output was `0.1.0`.
-- **EC-07b:** The local native executable created and extracted a package with nested UTF-8 text and binary data; both byte comparisons passed.
-- **EC-08a:** The preferred `NuGet.Packaging` backend built under Native AOT and executed package creation and reading successfully on the local Windows host.
+- **EC-07a:** Fresh executable from `pwsh -NoProfile -File scripts/validate-native.ps1` returned help/version on stdout, no stderr, exit 0; malformed command usage returned exit 2 with a stderr diagnostic and empty stdout.
+- **EC-07b:** The fresh native executable created and extracted nested UTF-8 text and binary files using paths containing spaces; both byte comparisons passed. Hash match returned 0; mismatch returned 1 on stderr with empty stdout.
+- **EC-08a:** The preferred `NuGet.Packaging` backend built under Native AOT and executed package creation/reading; the same executable produced the package consumed by the isolated .NET 11 project.
 - **EC-08b:** Not applicable because EC-08a succeeded; no fallback was attempted or represented as executed.
 
 ### Completion audit

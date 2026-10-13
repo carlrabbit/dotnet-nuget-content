@@ -35,7 +35,7 @@
 - The CLI project is `src/DotnetNugetContent/DotnetNugetContent.csproj`, targets `net11.0`, and enables `PublishAot`.
 - The preferred backend is implemented with `NuGet.Packaging` 7.9.0. `NuGet.Packaging` creates packages with `contentFiles/any/any/<relative-path>` entries and `buildAction=None`, `copyToOutput=true`, `flatten=false`; `PackageArchiveReader` reads packages for extraction.
 - Commands are `pack`, `unpack`, and `hash`; the exact options and exit behavior are documented in the root README and discoverable through `--help`.
-- Focused CLI and package lifecycle validation is `dotnet test --configuration Release`. The independent PackageReference boundary check is `pwsh -NoProfile -File scripts/validate-consumer.ps1`.
+- Focused CLI and package lifecycle validation is `dotnet test --configuration Release`. `pwsh -NoProfile -File scripts/validate-native.ps1` publishes a fresh native executable, validates its process behavior, and passes that same executable to `scripts/validate-consumer.ps1` for the isolated PackageReference boundary check.
 - AOT publication is RID-specific. For example, Windows x64 uses `dotnet publish src/DotnetNugetContent/DotnetNugetContent.csproj -c Release -r win-x64 --self-contained true -o artifacts/win-x64`. It requires the .NET 11 RC SDK and native compiler/linker prerequisites on the selected build host.
 
 ## Distribution boundary
