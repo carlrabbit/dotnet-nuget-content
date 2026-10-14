@@ -7,10 +7,11 @@ $publishDirectory = Join-Path $repoRoot "artifacts/native validation $runId"
 $executable = Join-Path $publishDirectory 'dotnet-nuget-content.exe'
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "dotnet nuget native validation $runId"
 
-function Invoke-CapturedProcess([string] $FilePath, [string[]] $Arguments) {
+function Invoke-CapturedProcess([string] $FilePath, [string[]] $Arguments, [string] $WorkingDirectory) {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
+    if ($WorkingDirectory) { $startInfo.WorkingDirectory = $WorkingDirectory }
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
@@ -82,6 +83,27 @@ try {
     if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $destination 'nested/deeper/readme.txt'))) -ne [Convert]::ToHexString($textBytes)) { throw 'Native text round-trip changed bytes.' }
     if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $destination 'nested/payload.bin'))) -ne [Convert]::ToHexString($binaryBytes)) { throw 'Native binary round-trip changed bytes.' }
 
+    $clean = Invoke-Native @('status', '--source', $destination)
+    Assert-NativeResult $clean 0 "Clean$([Environment]::NewLine)" '' 'Managed clean status'
+    $implicitStatus = Invoke-CapturedProcess $executable @('status') $destination
+    Assert-NativeResult $implicitStatus 0 "Clean$([Environment]::NewLine)" '' 'Implicit current-directory status'
+    [System.IO.File]::WriteAllText((Join-Path $destination 'nested/deeper/readme.txt'), 'managed update')
+    Remove-Item -LiteralPath (Join-Path $destination 'nested/payload.bin')
+    [System.IO.File]::WriteAllText((Join-Path $destination 'added.json'), '{"added":true}')
+    $changed = Invoke-Native @('status', '--source', $destination)
+    if ($changed.ExitCode -ne 0 -or $changed.Stdout -notmatch 'Added: added.json' -or $changed.Stdout -notmatch 'Modified: nested/deeper/readme.txt' -or $changed.Stdout -notmatch 'Deleted: nested/payload.bin') { throw 'Managed status did not distinguish added, modified, and deleted files.' }
+    $implicitClean = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--output', (Join-Path $feed 'sample.native.1.2.4.nupkg'), '--message', 'native lifecycle') $destination
+    if ($implicitClean.ExitCode -ne 0 -or $implicitClean.Stderr -ne '') { throw "Implicit-root managed pack failed: $($implicitClean.Stderr)" }
+    $managedPackage = Join-Path $feed 'sample.native.1.2.4.nupkg'
+    $history = Invoke-Native @('history', '--package', $managedPackage)
+    if ($history.ExitCode -ne 0 -or $history.Stdout -notmatch '1.2.3' -or $history.Stdout -notmatch '1.2.4' -or $history.Stdout -notmatch 'native lifecycle') { throw 'Managed package history did not show ordered lineage and its supplied message.' }
+    $implicitHistory = Invoke-CapturedProcess $executable @('history') $destination
+    if ($implicitHistory.ExitCode -ne 0 -or $implicitHistory.Stdout -notmatch '1.2.3') { throw 'Implicit current-directory history did not read the workspace baseline.' }
+    $packageStatus = Invoke-Native @('status', '--package', $managedPackage)
+    if ($packageStatus.ExitCode -ne 0 -or $packageStatus.Stdout -notmatch 'Package valid: 2 files') { throw 'Managed package inventory validation failed.' }
+    $nestedStatus = Invoke-CapturedProcess $executable @('status') (Join-Path $destination 'nested')
+    if ($nestedStatus.ExitCode -ne 1 -or $nestedStatus.Stdout -ne '' -or $nestedStatus.Stderr -notmatch 'Managed workspace marker not found') { throw 'Nested current directory unexpectedly discovered a workspace ancestor.' }
+
     $packageHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
     $hash = Invoke-Native @('hash', '--path', $package, '--expect', $packageHash)
     Assert-NativeResult $hash 0 "$packageHash$([Environment]::NewLine)" '' 'Native hash with a path containing spaces'
@@ -120,7 +142,7 @@ try {
     if (@(Get-ChildItem -LiteralPath $work -Directory -Force -Filter '.partial output with spaces.*.tmp').Count -ne 0) { throw 'Failed extraction left a staging directory.' }
 
     $consumerScript = Join-Path $PSScriptRoot 'validate-consumer.ps1'
-    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable)
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage)
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     if ($consumer.ExitCode -ne 0) { throw "Native NuGet consumer validation failed with exit code $($consumer.ExitCode)." }

@@ -2,6 +2,7 @@
 
 | ID | Title | State | Purpose |
 |---|---|---|---|
-| M0001 | Initialization and native content package vertical slice | ready | Initialize authority and prove an end-to-end AOT package-creation/consumption workflow. |
+| M0001 | Initialization and native content package vertical slice | done | Proved initial standalone Native AOT NuGet package/consumer path; historical evidence remains in its milestone. |
+| M0002 | Managed content snapshots and public manifest | done | Introduce package manifest v1, workspace status, versioned repack, and linear change history. |
 
-Only M0001 is currently implementation-ready. Later editing ergonomics, manifests, remote publishing, multi-RID distribution and richer verification require separate planning.
+M0002 is complete. M0001 is historical and was not rewritten to introduce M0002 semantics.
