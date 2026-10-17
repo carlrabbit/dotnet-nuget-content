@@ -22,6 +22,12 @@
 - Generated output must not contaminate a managed workspace inventory. The default managed output is placed in the parent of the resolved workspace root; reject explicit output inside that workspace rather than letting it become payload. Keep staging, conflict checks, and baseline immutability.
 - Validate all requirements of the published JSON Schema, including required properties, nullability, and nested types, as well as companion semantic rules. A full schema-validator dependency is optional; externally observable validation must agree with the public interchange contract. Validate historical initial-entry structure and path-list invariants for multi-entry histories too.
 
+## Atomic publication and interruption semantics
+
+- For pack and unpack, final published package/destination paths are commit boundaries: never expose partially written output at the final path and never overwrite existing user files. An interrupted operation must not corrupt source content or the managed workspace baseline.
+- On ordinary handled failures, clean staged artifacts. An abrupt external termination (for example, process kill) bypasses in-process cleanup and **may leave uniquely named temporary files**. Such remnants must not be mistaken for valid final artifacts, overwrite existing data, or be included in managed workspace payload. No crash-recovery service, journaling, or guarantee of cleanup after a forced kill is required.
+- Interruption validation must establish a meaningful operation phase (preferably after staging begins), not infer it from an arbitrary short delay. Test final-path atomicity and baseline preservation after forced termination separately from cleanup after ordinary errors. If deterministic stage observation cannot be achieved, do not claim that the relevant stage was exercised.
+
 ## Required validation
 
 - Tier 1/2: compile and test format serialization/validation, invalid/missing metadata, workspace root resolution, default/explicit source, clean/changed status, version progression, no-change refusal, message omission/presence, no-clobber and cleanup, schema-invalid missing/null/wrong-typed nested properties, and multi-entry history invariants. Include a representative large valid binary file and evidence of bounded-memory processing.
