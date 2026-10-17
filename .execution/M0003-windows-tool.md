@@ -16,10 +16,10 @@ Planner-seeded IDs, cases and validation gates. Implementation owns work package
 | AC-06 | acceptance | history --json matches the public chronology/message contract for both workspace and package. | WP-02, WP-03 | Source-generated history JSON preserves optional omitted message. | VAL-01 and VAL-05 passed: workspace/package history parsed, chronology and baseline version checked, initial absent message omitted, supplied message present. | done |
 | AC-07 | acceptance | New and existing command modes preserve deterministic output, stdout/stderr and error code semantics, rejecting conflicting selectors. | WP-02, WP-03 | Valueless `--json` recognized only by status/history; selectors are mutually exclusive. | VAL-01 and VAL-05 passed: conflicting selector exits 2 on stderr with no stdout; invalid package exits 1 with no JSON; text behavior and compact JSON checked. | done |
 | AC-08 | acceptance | Valid large binary, many files, Unicode names and deep supported Windows paths preserve exact bytes and behavior without payload-sized memory buffering. | WP-03 | Existing streamed hashing/extraction retained; installed validation covers 301 payload files and 64 MiB binary. | VAL-06 passed: 64 MiB pack/status/unpack SHA-256 match; 301 files and 226-character nested Unicode path round-trip exactly. | done |
-| AC-09 | acceptance | Failed/interrupted operations and output conflicts protect existing files/baselines and do not commit partial packages or destinations. | WP-03 | Staged/no-clobber package writes and transactional extraction exercised through installed tool. | VAL-06 passed: existing output preserved, in-workspace output rejected, malformed extraction left no destination, interrupted managed pack left no package/temp and preserved baseline. | done |
+| AC-09 | acceptance | Failed/interrupted operations and output conflicts protect existing files/baselines and do not commit partial packages or destinations. | WP-03 | Staged/no-clobber package writes and transactional extraction exercised through installed tool. | Pre-correction VAL-06: conflict and handled-failure checks passed; interruption test had no stage observation and does not prove write-stage interruption. Revalidate final-path atomicity and baseline; forced-kill temporary remnants allowed. | in-progress |
 | AC-10 | acceptance | Installed Native AOT tool reports consistent product version and provenance; unsupported RIDs do not acquire framework-dependent fallback. | WP-01, WP-03 | AOT project version 0.1.0, tool pointer and win-x64 RID package. | VAL-02/VAL-03 passed: installed `--version`=0.1.0, AMD64 PE, only win-x64 runtime path. SDK 11.0.100-rc.1.26425.128; VS 18 MSVC 14.51.36231. Installed PE SHA-256 `12A1E427A4E0FE6AC85D64DFFB5C5417D6A300AC96E6364BC9796AF2A2CC57E`; top-level package SHA-256 `13B41A2DA97E46798EB87A77A0ECCAC84F0F7AEA8D076BB0D6FBDE94D25A7140`; win-x64 package SHA-256 `1D8BA210CAAB383A77AB59C8AA8F28F4EF4CCE95AE015435A746308A7043042D`. | done |
 | DOC-01 | documentation | Sync directly affected technical installation and structured-output contract documentation; defer help-text wording review and release presentation polish to M0004. | WP-01, WP-02 | Updated README, SPECS, ENGINEERING and M0003 JSON contract. | VAL-07 passed: docs checked against distribution/JSON authority; help-text editorial review and release publication remain assigned to M0004. | done |
-| ART-01 | artifact | Reconcile every obligation, evidence case and validation gate using executed criterion-specific evidence and final audit. | WP-03 | Criterion and case evidence recorded in this ledger; package hashes and provenance recorded above. | VAL-07 passed: exact milestone/ledger ID sets reconciled; all seven gates executed; installed package and independent consumer evidence are from local Windows x64 run. | done |
+| ART-01 | artifact | Reconcile every obligation, evidence case and validation gate using executed criterion-specific evidence and final audit. | WP-03 | Criterion and case evidence recorded in this ledger; package hashes and provenance recorded above. | Prior ID audit remains historical; rerun completion reconciliation after EC-09a is satisfied. | in-progress |
 
 ## Evidence Case Registry
 
@@ -36,7 +36,7 @@ Planner-seeded IDs, cases and validation gates. Implementation owns work package
 | EC-07a | AC-07 | Installed process stdout/stderr, errors and text mode | VAL-05 | JSON single-line stdout, no diagnostics on success; selector conflict exit 2 and package failure exit 1; text mode retained. | done |
 | EC-08a | AC-08 | Large binary and many files | VAL-06 | 64 MiB SHA-256-preserving round trip and 301-file package inventory passed. | done |
 | EC-08b | AC-08 | Unicode and nested Windows paths | VAL-06 | Unicode path length 226 characters and bytes preserved on pack/unpack. | done |
-| EC-09a | AC-09 | Conflict/interruption cleanup and preservation | VAL-06 | No-clobber output, in-workspace output rejection, malformed extraction cleanup and killed managed pack checks passed; baseline bytes unchanged. | done |
+| EC-09a | AC-09 | Conflict/interruption cleanup and preservation | VAL-06 | Handled-failure evidence retained; killed-pack phase was not established. Pending meaningful-stage forced-termination evidence, final output/baseline checks, and separate normal-error staging cleanup. | in-progress |
 | EC-10a | AC-10 | Native RID selection and consistent version | VAL-02 | Top-level pointer and win-x64 AOT package versions match; installed version and PE architecture verified; no `any`/other RID executable. | done |
 
 ## Work Packages
@@ -56,18 +56,18 @@ Planner-seeded IDs, cases and validation gates. Implementation owns work package
 | VAL-03 | Install, invoke, update, uninstall top-level tool from isolated local feed via global-equivalent and local manifest modes | local Windows isolated tool state | EC-02a, EC-03a, EC-03b | passed | Executed by `scripts/validate-tool.ps1`; isolated local feed; tool-path and temporary manifest install/invoke/update/uninstall 0.1.0→0.1.1. |
 | VAL-04 | Installed tool pack/unpack/status/repack/history and isolated dotnet restore/build consumer with independent byte oracle | local Windows installed tool/consumer | EC-04a, EC-04b | passed | Installed tool produced managed 1.1.0 snapshot; isolated consumer build succeeded and compared output bytes with workspace source, metadata absent. |
 | VAL-05 | Installed status/history JSON, malformed cases, output streams, exit codes and text mode | local Windows installed tool | EC-05a, EC-05b, EC-06a, EC-07a | passed | Executed by `scripts/validate-tool.ps1`; PowerShell parsed all JSON cases and checked stream ownership, message presence/omission, exit codes and text mode. |
-| VAL-06 | Large file/many files/deep-Unicode Windows paths and failure/interrupt checks | local Windows filesystem | EC-08a, EC-08b, EC-09a | passed | Executed by `scripts/validate-tool.ps1`; 64 MiB, 301 files, 226-character Unicode path, conflicts, malformed extraction and interrupted managed pack all passed. |
-| VAL-07 | Reconcile referenced project authority, milestone, ledger and artifact provenance | repository and installed artifact | DOC-01, ART-01, AC-10 | passed | Authority/ledger IDs reconciled; installed PE AMD64, version 0.1.0 and SHA-256 plus package hashes recorded in AC-10 evidence; docs synchronized. |
+| VAL-06 | Large file/many files/deep-Unicode Windows paths and handled-error cleanup and meaningful-stage interruption checks | local Windows filesystem | EC-08a, EC-08b, EC-09a | in-progress | Executed by `scripts/validate-tool.ps1`; 64 MiB, 301 files, 226-character Unicode path, conflicts, malformed extraction and prior interrupted managed pack was terminated without verifying phase; redo stage-aware interruption and atomicity checks. |
+| VAL-07 | Reconcile referenced project authority, milestone, ledger and artifact provenance | repository and installed artifact | DOC-01, ART-01, AC-10 | in-progress | Authority/ledger IDs reconciled; installed PE AMD64, version 0.1.0 and SHA-256 plus package hashes recorded in AC-10 evidence; docs synchronized previously; final audit pending corrected EC-09a evidence. |
 
 ## Resume Point
 
 Last completed work package: WP-03
 
-Current work package: complete; PR publication pending
+Current work package: interruption-evidence correction
 
-Next concrete action: commit, push branch and open PR against main
+Next concrete action: redesign interruption check to establish a meaningful operation stage; record atomicity, handled cleanup and baseline preservation independently
 
-Known agent-resolvable gaps: none recorded at planning
+Known agent-resolvable gaps: EC-09a stage-aware interruption proof and revised AC-09 reconciliation
 
 External blockers/escalations: none known; missing toolchain must be reported
 
@@ -76,5 +76,5 @@ External blockers/escalations: none known; missing toolchain must be reported
 - [x] Exact milestone/ledger obligation and evidence-case ID equality.
 - [x] Each obligation and evidence case linked to implemented behavior and executed validation at declared target/locus.
 - [x] Installed tool/consumer proofs and native artifact provenance recorded; no substitutes.
-- [x] Fresh validation gates all complete or blocker reported.
-- [x] Final audit; criterion-specific durable milestone completion evidence recorded.
+- [ ] Repeat the interruption portion of VAL-06 at a verified meaningful stage; distinguish forced-kill remnants from handled-error cleanup.
+- [ ] Rerun VAL-07 and final audit; update criterion-specific durable M0003 evidence after EC-09a closure.
