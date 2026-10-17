@@ -17,7 +17,7 @@ internal static class Cli
         try
         {
             if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"]) { Console.Out.WriteLine(HelpText); return 0; }
-            if (args is ["--version"] or ["version"]) { Console.Out.WriteLine(typeof(Cli).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"); return 0; }
+            if (args is ["--version"] or ["version"]) { Console.Out.WriteLine(typeof(Cli).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"); return 0; }
             var options = ParseOptions(args[1..]);
             switch (args[0])
             {
@@ -69,17 +69,31 @@ internal static class Cli
     private static void EnsureOptions(Dictionary<string, string> d, params string[] allowed) { var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal)); if (bad is not null) throw new CliException($"Unknown option '--{bad}'."); }
     private static void EnsureExclusive(Dictionary<string, string> d, string first, string second) { if (d.ContainsKey(first) && d.ContainsKey(second)) throw new CliException($"Options '--{first}' and '--{second}' cannot be used together."); }
     private const string HelpText = """
-        dotnet-nuget-content — manage immutable NuGet content snapshots
+        dotnet-nuget-content — immutable NuGet packages for arbitrary files
+
         Usage:
-          dotnet-nuget-content --help | --version
-          dotnet-nuget-content pack --id <id> --version <version> --source <directory> --output <file.nupkg>
-          dotnet-nuget-content pack --version <version> [--source <workspace-root>] [--output <file.nupkg>] [--message <text>]
-          dotnet-nuget-content unpack --package <file.nupkg> --destination <directory> [--sha256 <hex>]
-          dotnet-nuget-content status [--source <workspace-root> | --package <file.nupkg>] [--json]
-          dotnet-nuget-content history [--source <workspace-root> | --package <file.nupkg>] [--json]
-          dotnet-nuget-content hash --path <file> [--expect <sha256>]
-        Managed status/history/pack default to the current directory. Managed pack defaults output to the workspace parent and rejects output inside the workspace.
-        Pack creates a new version; unpack refuses an existing destination.
+          dotnet-nuget-content --help
+          dotnet-nuget-content --version
+          dotnet-nuget-content pack --id <id> --version <version> --source <dir> --output <file.nupkg>
+          dotnet-nuget-content pack --version <version> [--source <workspace>] [--output <file.nupkg>] [--message <text>]
+          dotnet-nuget-content unpack --package <file.nupkg> --destination <dir> [--sha256 <hash>]
+          dotnet-nuget-content status [--source <workspace> | --package <file.nupkg>] [--json]
+          dotnet-nuget-content history [--source <workspace> | --package <file.nupkg>] [--json]
+          dotnet-nuget-content hash --path <file> [--expect <hash>]
+
+        Workflow:
+          First package: pack --id ... --version ... --source ... --output ...
+          Update: unpack, edit workspace files, status, pack --version ...
+          Inspect: status and history; add --json for structured output.
+
+        Managed status, history and pack use the current directory by default; they
+        never search parent directories. Managed pack needs changes and a higher
+        version. Without --output it writes beside the workspace, leaving its
+        baseline unchanged. Existing output files and extraction destinations are
+        not replaced.
+
+        Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
+        Errors are written to stderr.
         """;
 }
 

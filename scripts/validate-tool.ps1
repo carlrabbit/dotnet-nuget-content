@@ -1,5 +1,8 @@
 param(
-    [string] $Configuration = 'Release'
+    [string] $Configuration = 'Release',
+    [string] $CandidateDirectory,
+    [string] $Version = '0.1.0',
+    [string] $UpdateVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,8 +14,9 @@ $work = Join-Path ([System.IO.Path]::GetTempPath()) "dotnet-nuget-content M0003 
 $feed = Join-Path $work 'isolated local NuGet feed'
 $toolPath = Join-Path $work 'isolated global-equivalent tools'
 $localProject = Join-Path $work 'local manifest consumer'
-$version = '0.1.0'
-$updateVersion = '0.1.1'
+$version = $Version
+if (-not $UpdateVersion) { $UpdateVersion = if ($version -eq '0.1.0') { '0.1.1' } else { '1.0.1' } }
+$updateVersion = $UpdateVersion
 $packageId = 'dotnet-nuget-content'
 
 function Invoke-CapturedProcess([string] $FilePath, [string[]] $Arguments, [string] $WorkingDirectory = $work) {
@@ -92,6 +96,41 @@ function Assert-PackageIdentity([System.IO.Compression.ZipArchive] $Archive, [st
     $packageVersion = $nuspec.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='version']").InnerText
     if ($identity -ne $ExpectedId -or $packageVersion -ne $ExpectedVersion) { throw "Package identity/version mismatch in $EntryName." }
 }
+function Assert-ReleaseMetadata([System.IO.Compression.ZipArchive] $Archive, [string] $EntryName, [string] $ExpectedId) {
+    $nuspecEntry = $Archive.GetEntry($EntryName)
+    if (-not $nuspecEntry) { throw "Package is missing its expected nuspec: $EntryName" }
+    $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
+    try { [xml]$nuspec = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    $metadata = $nuspec.SelectSingleNode("//*[local-name()='metadata']")
+    $expected = @{
+        id = $ExpectedId
+        version = $version
+        title = 'dotnet-nuget-content — immutable content snapshots'
+        description = 'Windows command-line tool for creating and maintaining immutable NuGet packages of arbitrary files. Supports versioned snapshots, workspace status, change history, SHA-256 verification, and JSON output. Generated packages integrate with ordinary .NET PackageReference consumers.'
+        authors = 'Martin Koch'
+        license = 'Unlicense'
+        projectUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
+        repositoryUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
+        releaseNotes = 'First stable Windows x64 Native AOT .NET tool release. Immutable arbitrary-content package snapshots, managed workspace status and repack, manifest v1, history, SHA-256 validation, JSON inspection, and ordinary PackageReference consumption.'
+    }
+    foreach ($name in $expected.Keys) {
+        $actual = switch ($name) {
+            'license' { [string]$metadata.license.InnerText }
+            'repositoryUrl' { [string]$metadata.repository.url }
+            default { [string]$metadata.SelectSingleNode("*[local-name()='$name']").InnerText }
+        }
+        if ($actual -cne $expected[$name]) { throw "NuGet metadata '$name' mismatch in $ExpectedId ${version}: '$actual'." }
+    }
+    if ([string]$metadata.license.type -cne 'expression' -or [string]$metadata.repository.type -cne 'git') { throw "NuGet license or repository metadata type is invalid in $ExpectedId." }
+    $tags = [string]$metadata.tags
+    if ($tags -cne 'dotnet-tool nuget content files snapshots versioning nativeaot') { throw "NuGet tags mismatch in $ExpectedId $version." }
+    $embeddedReadme = $Archive.GetEntry('README.md')
+    if (-not $embeddedReadme) { throw "Package $ExpectedId is missing its embedded README.md." }
+    $readmeReader = [System.IO.StreamReader]::new($embeddedReadme.Open())
+    try { $readme = $readmeReader.ReadToEnd() } finally { $readmeReader.Dispose() }
+    $authoredReadme = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'docs/nuget/README.md'))
+    if ($readme.TrimEnd() -cne $authoredReadme.TrimEnd()) { throw "Embedded README does not match docs/nuget/README.md in $ExpectedId." }
+}
 
 try {
     New-Item -ItemType Directory -Force -Path $work, $feed, $toolPath, $localProject | Out-Null
@@ -102,10 +141,16 @@ try {
     $topBuild = Join-Path $work 'top-level pack'
     $ridBuild = Join-Path $work 'win-x64 pack'
     New-Item -ItemType Directory -Force -Path $topBuild, $ridBuild | Out-Null
-    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '--no-restore', "-p:Version=$version", '-o', $topBuild) | Out-Null
-    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '-r', 'win-x64', '--no-restore', "-p:Version=$version", '-o', $ridBuild) | Out-Null
-    $topCandidate = Join-Path $topBuild "$packageId.$version.nupkg"
-    $ridCandidate = Join-Path $ridBuild "$packageId.win-x64.$version.nupkg"
+    if ($CandidateDirectory) {
+        $candidateRoot = (Resolve-Path -LiteralPath $CandidateDirectory).Path
+        $topCandidate = Join-Path $candidateRoot "$packageId.$version.nupkg"
+        $ridCandidate = Join-Path $candidateRoot "$packageId.win-x64.$version.nupkg"
+    } else {
+        Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '--no-restore', "-p:Version=$version", '-o', $topBuild) | Out-Null
+        Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '-r', 'win-x64', '--no-restore', "-p:Version=$version", '-o', $ridBuild) | Out-Null
+        $topCandidate = Join-Path $topBuild "$packageId.$version.nupkg"
+        $ridCandidate = Join-Path $ridBuild "$packageId.win-x64.$version.nupkg"
+    }
     foreach ($candidate in @($topCandidate, $ridCandidate)) {
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Expected tool package was not produced: $candidate" }
         Copy-Item -LiteralPath $candidate -Destination $feed
@@ -118,6 +163,8 @@ try {
     try {
         Assert-PackageIdentity $topArchive "$packageId.nuspec" $packageId $version
         Assert-PackageIdentity $ridArchive "$packageId.win-x64.nuspec" "$packageId.win-x64" $version
+        Assert-ReleaseMetadata $topArchive "$packageId.nuspec" $packageId
+        Assert-ReleaseMetadata $ridArchive "$packageId.win-x64.nuspec" "$packageId.win-x64"
         $topSpec = $topArchive.GetEntry('tools/any/any/DotnetToolSettings.xml')
         if (-not $topSpec) { throw 'Top-level tool pointer package is missing DotnetToolSettings.xml.' }
         $topReader = [System.IO.StreamReader]::new($topSpec.Open())
@@ -133,6 +180,12 @@ try {
     $versionResult = Invoke-Tool @('--version')
     Assert-ToolResult $versionResult 0 'Installed global-equivalent --version'
     if ($versionResult.Stdout -ne "$version`r`n" -or $versionResult.Stderr) { throw 'Installed tool version output does not match the package version.' }
+    $helpResult = Invoke-Tool @('--help')
+    Assert-ToolResult $helpResult 0 'Installed root help'
+    if ($helpResult.Stderr) { throw 'Installed root help emitted stderr.' }
+    $helpSource = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'docs/release/HELP-TEXT.md'))
+    $helpMatch = [regex]::Match($helpSource, '(?s)```text\r?\n(.*?)\r?\n```')
+    if (-not $helpMatch.Success -or $helpResult.Stdout.Replace("`r`n", "`n").TrimEnd("`n") -cne $helpMatch.Groups[1].Value.Replace("`r`n", "`n")) { throw 'Installed root help differs from the authored release help contract.' }
     $shimLine = (Get-Content -LiteralPath $toolShim | Select-Object -First 2 | Select-Object -Last 1)
     $nativeExe = [regex]::Match($shimLine, '"%~dp0([^" ]+\.exe)"').Groups[1].Value
     if (-not $nativeExe) { throw 'Could not resolve the installed native executable through its shim.' }

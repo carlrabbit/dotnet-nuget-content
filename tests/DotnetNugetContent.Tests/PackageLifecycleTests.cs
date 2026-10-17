@@ -160,7 +160,7 @@ public sealed class PackageLifecycleTests : IDisposable
             Assert.Contains("pack --id", output.ToString());
             output.GetStringBuilder().Clear();
             Assert.Equal(0, await Cli.RunAsync(["--version"]));
-            Assert.Equal("0.1.0", output.ToString().Trim());
+            Assert.Equal("1.0.0", output.ToString().Trim());
 
             output.GetStringBuilder().Clear();
             var file = Path.Combine(_root, "hash.txt");
