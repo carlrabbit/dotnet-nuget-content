@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Lifecycle state | implementing (correction pass; prior completion evidence under review) |
+| Lifecycle state | done |
 | Mode | ai-executed-human-reviewed |
 | Baseline implementation model | project default (guide 0.9.1) |
 | Baseline executor readiness | confirmed |
@@ -124,9 +124,15 @@ Read milestone and ledger; verify exact obligation/evidence-case ID sets; decomp
 
 ## Completion Evidence
 
-**Reopened by planning review.** The prior reported 9/9 tests and Native AOT/consumer execution are historical evidence from before these corrections, not proof of the newly required behaviors. The previous records report conflicting native executable SHA-256 values (milestone: `E219979FFE30A92553AC1D555219EF4D382FB4F1CA36420BBEE159CE7C37580B`; ledger VAL-03: `30576BDBEC8057E6A0F67585922DC87BDFAD83E89A49EA2C2C3B8EBB2CAFB0E3`). Do not claim a single validated artifact until final fresh evidence identifies the build and reconciles both records.
+M0002 correction pass completed and reconciled in `.execution/M0002-managed-content.md`.
 
-Implementation must replace this section with criterion/evidence-case-specific final proof only after all required gates, including VAL-06 through VAL-08, have passed. Preserve historical evidence elsewhere in the ledger with explicit stale labels; do not assert the milestone is complete in the interim.
+- **VAL-01:** `dotnet test --configuration Release` passed on .NET SDK `11.0.100-rc.1.26425.128` (12 passed, 0 failed). Coverage includes full structural schema checks, null/wrong-type/missing nested properties, multi-entry initial-history semantics, output placement/refusal, and a 64 MiB package streaming allocation check.
+- **VAL-02:** Real package operations passed across versions 1.2.3, 1.2.4 and 1.2.5. Both omitted-output paths resolve beside the managed workspace; package outputs remain absent from workspace inventory.
+- **VAL-03/04/08:** A fresh `win-x64` Native AOT executable completed the managed lifecycle and an isolated `net11.0` PackageReference consumer restored and built the native-produced 1.2.4 package. Consumer paths and bytes were compared to the independently edited workspace using fixed-size streamed byte comparisons, and `.nuget-content` was absent from build output.
+- **VAL-05/07:** All 12 obligation IDs, 14 evidence-case IDs and 8 validation-gate IDs were reconciled; required schema and initial-history invalid cases failed with domain errors.
+- **VAL-06:** Implicit-CWD and explicit-source default outputs landed in the workspace parent, generated packages did not enter inventory, explicit in-workspace output was rejected, and 64 MiB payload operations passed below the payload-sized allocation threshold with exact size/hash equality.
+
+Final artifact provenance: built by `scripts/validate-native.ps1` from implementation source commit `bcc01e3` using harness revision `62d344f`, at `artifacts/native validation 1a95375cfde84634b2968510af842f5a/dotnet-nuget-content.exe`; size 10,199,552 bytes; SHA-256 `B3102CB117CF11C1B1DC54D0998D41D6B490CB132ED96C8A28B25F4659672FB3`. No AOT or trim warnings were emitted; .NET RC SDK emitted its preview-support notice. The two conflicting pre-correction hashes are explicitly superseded in the ledger; only this fresh artifact is claimed.
 
 ## Escalation Boundary
 
