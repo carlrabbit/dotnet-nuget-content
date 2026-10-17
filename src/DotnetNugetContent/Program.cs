@@ -88,9 +88,8 @@ internal static class Cli
 
         Managed status, history and pack use the current directory by default; they
         never search parent directories. Managed pack needs changes and a higher
-        version. Without --output it writes beside the workspace, leaving its
-        baseline unchanged. Existing output files and extraction destinations are
-        not replaced.
+        version. Without --output it writes beside the workspace, leaving its baseline
+        unchanged. Existing output files and extraction destinations are not replaced.
 
         Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
         Errors are written to stderr.
