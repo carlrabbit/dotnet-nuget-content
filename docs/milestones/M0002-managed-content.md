@@ -128,3 +128,6 @@ Read milestone and ledger; verify exact obligation/evidence-case ID sets; decomp
 
 Implementation must replace this section with criterion/evidence-case-specific final proof only after all required gates, including VAL-06 through VAL-08, have passed. Preserve historical evidence elsewhere in the ledger with explicit stale labels; do not assert the milestone is complete in the interim.
 
+## Escalation Boundary
+
+Escalate only material departures from the now-resolved public manifest schema, default workspace output policy, linear history, streaming requirement, native distribution, or validation topology. The correction implementer owns code and test mechanics.
