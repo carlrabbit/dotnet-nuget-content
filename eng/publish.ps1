@@ -1,6 +1,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Prepare')]
 param(
     [Parameter(ParameterSetName = 'Prepare')][switch] $Prepare,
+    [Parameter(ParameterSetName = 'Prepare')][string] $OutputDirectory,
     [Parameter(ParameterSetName = 'Publish', Mandatory = $true)][switch] $Publish,
     [Parameter(ParameterSetName = 'Test')][switch] $TestPublish,
     [Parameter(ParameterSetName = 'Publish', Mandatory = $true)][string] $CandidateDirectory,
@@ -172,11 +173,11 @@ if ($Publish) {
 
 # No mode, or -Prepare, means prepare a local candidate only. Neither path
 # contacts a package feed or invokes any publishing command.
-$candidateRoot = Join-Path $repoRoot 'artifacts/release-candidate-1.0.0'
-if (Test-Path -LiteralPath $candidateRoot) { throw "Candidate directory already exists and will not be overwritten: $candidateRoot" }
 $sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the Git source revision.' }
 if (& git -C $repoRoot status --porcelain) { throw 'Candidate build requires a clean source worktree.' }
+$candidateRoot = if ($OutputDirectory) { [System.IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoRoot "artifacts/release-candidate-$version-$sourceCommit" }
+if (Test-Path -LiteralPath $candidateRoot) { throw "Candidate directory already exists and will not be overwritten: $candidateRoot" }
 $sdkVersion = (& dotnet --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.0\.100-rc\.1') { throw "Expected the authorized .NET 11 RC SDK; found '$sdkVersion'." }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
