@@ -95,7 +95,8 @@ try {
     $managedPackage = Join-Path $work 'sample.native.1.2.4.nupkg'
     $implicitPack = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--message', 'native lifecycle') $destination
     Assert-NativeResult $implicitPack 0 "Created $managedPackage$([Environment]::NewLine)" '' 'Implicit-root managed pack default output'
-    if ((Invoke-Native @('status', '--source', $destination)).Stdout -notmatch 'Added: added.json') { throw 'Default package output contaminated the workspace inventory.' }
+    $implicitInventory = Invoke-Native @('status', '--source', $destination)
+    if ($implicitInventory.ExitCode -ne 0 -or $implicitInventory.Stdout -notmatch 'Added: added.json' -or $implicitInventory.Stdout -match 'sample\.native\.1\.2\.4\.nupkg') { throw "Default package output contaminated the workspace inventory: $($implicitInventory.Stdout)" }
     $history = Invoke-Native @('history', '--package', $managedPackage)
     if ($history.ExitCode -ne 0 -or $history.Stdout -notmatch '1.2.3' -or $history.Stdout -notmatch '1.2.4' -or $history.Stdout -notmatch 'native lifecycle') { throw 'Managed package history did not show ordered lineage and its supplied message.' }
     $implicitHistory = Invoke-CapturedProcess $executable @('history') $destination
