@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Lifecycle state | ready |
+| Lifecycle state | implementing (correction pass; prior completion evidence under review) |
 | Mode | ai-executed-human-reviewed |
 | Baseline implementation model | project default (guide 0.9.1) |
 | Baseline executor readiness | confirmed |
@@ -39,6 +39,8 @@ Scope: initial package manifest, public JSON Schema, metadata validation, manage
 - No ancestor search: a managed workspace is recognized at the supplied root or CWD root only. Status/history are read-only; new package must not mutate the baseline marker.
 - Chronological linear ancestry is descriptive only. A new package is a complete snapshot, not a delta or historical payload store.
 - Native AOT and NuGet.Packaging continue; preserve correct contentFiles consumer semantics and no-clobber/staging. No unrelated command/product expansion.
+- Managed pack without `--output` writes `<id>.<version>.nupkg` to the parent of the resolved workspace root for either implicit CWD or explicit `--source`. Explicit outputs inside that root are rejected to prevent package self-inclusion.
+- Manifest runtime validation must enforce the entire documented v1 schema and semantic history invariants, including multi-entry history. Large valid files must be processed by streaming without loading whole payloads in memory. Native consumer proof must compare final payload to independent workspace-source bytes.
 
 ## Baseline Executor Readiness and Decision Preservation
 
@@ -88,6 +90,10 @@ All applicable individually verifiable outcomes have stable IDs and preseeded le
 | EC-06b | AC-06 | Reserved path/output conflict refusal preserves state | Different behavioral path or target may mask failure |
 | EC-10a | AC-10 | Published native process performs managed workflow | Different behavioral path or target may mask failure |
 | EC-10b | AC-10 | NuGet consumer receives payload only | Different behavioral path or target may mask failure |
+| EC-05c | AC-05 | Default output is outside workspace for implicit and explicit source; generated package is never payload | Default-path behavior can escape other repack assertions |
+| EC-09a | AC-09 | Malformed required/null/typed/nested manifest data and multi-entry initial history are rejected | Syntax-only schema checks cannot prove runtime equivalence |
+| EC-08a | AC-08 | Package validation/extraction streams a large valid binary without whole-file buffering | Small-file tests hide memory-proportional processing |
+| EC-10c | AC-10 | Native consumer output matches independent final workspace bytes | Package-derived expectations can share the same defect as package content |
 
 ## Validation
 
@@ -98,6 +104,9 @@ All applicable individually verifiable outcomes have stable IDs and preseeded le
 | VAL-03 | Tier 4 | Fresh `win-x64` Native AOT publish + actual native process integration (repeatable script) | local Windows with SDK 11 RC and native linker | EC-04a, EC-04b, EC-10a | Executed per-case assertions, current artifact provenance and failure evidence |
 | VAL-04 | Tier 4 | Isolated .NET 11 PackageReference restore/build consuming freshly native-produced package | local isolated NuGet feed + SDK | EC-10b, AC-02 | Executed per-case assertions, current artifact provenance and failure evidence |
 | VAL-05 | Tier 2 | Review authority/schema/help, seeded ledger and complete criterion-specific audit | repository, local | DOC-01, ART-01, AC-09 | Executed per-case assertions, current artifact provenance and failure evidence |
+| VAL-06 | Tier 1/3 | Verify default output location, in-workspace output rejection, and large valid binary streaming through actual package operations | local .NET 11 RC SDK/filesystem | EC-05c, EC-08a | Default and explicit-root proof, clean inventory/no self-inclusion; large file bytes/hashes plus bounded-memory method evidence |
+| VAL-07 | Tier 1/2 | Schema-wide positive/negative conformance cases and multi-entry initial-history checks | local .NET 11 RC SDK, public schema and runtime | EC-09a | Exact malformed cases, expected domain diagnostics, schema/runtime parity |
+| VAL-08 | Tier 4 | Compare fresh native-produced package consumer files to independent final edited workspace fixture | local Windows Native AOT and isolated NuGet consumer | EC-10c | Independently sourced byte/path comparisons and no metadata leakage |
 
 Run the published native executable from the current build, not a global install or managed DLL. If native toolchain is unavailable, report blocker rather than substituting hosted workflows or declaring completion. No tests have been executed by planning.
 
@@ -115,8 +124,7 @@ Read milestone and ledger; verify exact obligation/evidence-case ID sets; decomp
 
 ## Completion Evidence
 
-Completed after final audit. `dotnet test --configuration Release` passed (9/9) on .NET 11 RC 11.0.100-rc.1.26425.128. `pwsh -NoProfile -File scripts/validate-native.ps1` freshly published and executed `win-x64` Native AOT, verified implicit root status/history/pack, explicit workspace/package status, nested-root failure, change classification and linear history, then restored and built an isolated .NET 11 consumer from the native-produced 1.2.4 package. The consumer compared every manifest payload byte-for-byte and confirmed `.nuget-content` metadata was absent. Native executable: 10,183,168 bytes; SHA-256 `E219979FFE30A92553AC1D555219EF4D382FB4F1CA36420BBEE159CE7C37580B`. No AOT or trim warnings were emitted; SDK emitted its expected preview-support notice. Criterion and evidence-case results are recorded in `.execution/M0002-managed-content.md`.
+**Reopened by planning review.** The prior reported 9/9 tests and Native AOT/consumer execution are historical evidence from before these corrections, not proof of the newly required behaviors. The previous records report conflicting native executable SHA-256 values (milestone: `E219979FFE30A92553AC1D555219EF4D382FB4F1CA36420BBEE159CE7C37580B`; ledger VAL-03: `30576BDBEC8057E6A0F67585922DC87BDFAD83E89A49EA2C2C3B8EBB2CAFB0E3`). Do not claim a single validated artifact until final fresh evidence identifies the build and reconciles both records.
 
-## Escalation Boundary
+Implementation must replace this section with criterion/evidence-case-specific final proof only after all required gates, including VAL-06 through VAL-08, have passed. Preserve historical evidence elsewhere in the ledger with explicit stale labels; do not assert the milestone is complete in the interim.
 
-Escalate only material departures from decided public manifest schema, workspace contract, history semantics, distribution or validation topology.
