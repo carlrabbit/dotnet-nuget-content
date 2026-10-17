@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Lifecycle state | done |
+| Lifecycle state | implementing — interruption evidence correction |
 | Mode | ai-executed-human-reviewed |
 | Baseline implementation model | project default (guide v0.9.1) |
 | Baseline executor readiness | confirmed |
@@ -79,7 +79,7 @@ Individually verifiable criteria and heterogeneous proof paths are seeded with s
 - **AC-06** — history --json matches the public chronology/message contract for both workspace and package.
 - **AC-07** — New and existing command modes preserve deterministic output, stdout/stderr and error code semantics, rejecting conflicting selectors.
 - **AC-08** — Valid large binary, many files, Unicode names and deep supported Windows paths preserve exact bytes and behavior without payload-sized memory buffering.
-- **AC-09** — Failed/interrupted operations and output conflicts protect existing files/baselines and do not commit partial packages or destinations.
+- **AC-09** — Handled failures and output conflicts preserve existing files/baselines, do not commit partial packages or destinations, and clean staging files. Abrupt termination must not publish partial final outputs or corrupt the workspace baseline; harmless uniquely named temporary remnants are permitted after forced termination.
 - **AC-10** — Installed Native AOT tool reports consistent product version and provenance; unsupported RIDs do not acquire framework-dependent fallback.
 - **DOC-01** — Sync directly affected technical installation and structured-output contract documentation; defer help-text wording review and release presentation polish to M0004.
 - **ART-01** — Reconcile every obligation, evidence case and validation gate using executed criterion-specific evidence and final audit.
@@ -99,7 +99,7 @@ Individually verifiable criteria and heterogeneous proof paths are seeded with s
 | EC-07a | AC-07 | Installed process stdout/stderr, errors and text mode | Distinct behavior, installed surface, or failure path |
 | EC-08a | AC-08 | Large binary and many files | Distinct behavior, installed surface, or failure path |
 | EC-08b | AC-08 | Unicode and nested Windows paths | Distinct behavior, installed surface, or failure path |
-| EC-09a | AC-09 | Conflict/interruption cleanup and preservation | Distinct behavior, installed surface, or failure path |
+| EC-09a | AC-09 | Handled-failure cleanup and no-clobber; forced termination at a confirmed meaningful operation phase demonstrates final-path atomicity and baseline preservation | Distinct behavior, installed surface, or failure path |
 | EC-10a | AC-10 | Native RID selection and consistent version | Distinct behavior, installed surface, or failure path |
 
 ## Validation
@@ -111,7 +111,7 @@ Individually verifiable criteria and heterogeneous proof paths are seeded with s
 | VAL-03 | Tier 4 | Install, invoke, update, uninstall top-level tool from isolated local feed via global-equivalent and local manifest modes | local Windows isolated tool state | EC-02a, EC-03a, EC-03b | Criterion-specific executed result and artifact provenance |
 | VAL-04 | Tier 4 | Installed tool pack/unpack/status/repack/history and isolated dotnet restore/build consumer with independent byte oracle | local Windows installed tool/consumer | EC-04a, EC-04b | Criterion-specific executed result and artifact provenance |
 | VAL-05 | Tier 4 | Installed status/history JSON, malformed cases, output streams, exit codes and text mode | local Windows installed tool | EC-05a, EC-05b, EC-06a, EC-07a | Criterion-specific executed result and artifact provenance |
-| VAL-06 | Tier 3/4 | Large file/many files/deep-Unicode Windows paths and failure/interrupt checks | local Windows filesystem | EC-08a, EC-08b, EC-09a | Criterion-specific executed result and artifact provenance |
+| VAL-06 | Tier 3/4 | Large file/many files/deep-Unicode Windows paths, handled-error staging cleanup, and interruption at a verified meaningful stage | local Windows filesystem | EC-08a, EC-08b, EC-09a | Criterion-specific executed result and artifact provenance |
 | VAL-07 | Tier 2 | Reconcile referenced project authority, milestone, ledger and artifact provenance | repository and installed artifact | DOC-01, ART-01, AC-10 | Criterion-specific executed result and artifact provenance |
 
 ## Human Review
@@ -128,7 +128,7 @@ Reread milestone and ledger; establish exact ID-set equality, map work packages,
 
 ## Completion Evidence
 
-Completed on the authorized local Windows x64 host with .NET SDK `11.0.100-rc.1.26425.128` and the existing Visual Studio 18/MSVC `14.51.36231` native toolchain; no host software or CI changes were made. `dotnet test DotnetNugetContent.sln -c Release --no-restore` passed (14/14). `scripts/validate-tool.ps1` produced and inspected the top-level 0.1.0 pointer and matching `win-x64` Native AOT package, installed both global-equivalent and local-manifest forms from an isolated local feed, invoked/updated/uninstalled them in temporary state, exercised the installed managed lifecycle and JSON/text contracts, and built an independent `PackageReference` consumer whose output bytes were compared with the workspace source. The installed executable was an AMD64 PE and reported 0.1.0. The same installed-tool run passed 301-file and 64 MiB streaming checks, a 226-character nested Unicode path, conflict/failure cleanup and interrupted-pack baseline preservation. Exact criterion/case/gate mappings, executable and package SHA-256 provenance, and per-gate evidence are recorded in `.execution/M0003-windows-tool.md`. No M0003 validation blockers remain. Final editorial help review and release publication remain M0004 work.
+Completed on the authorized local Windows x64 host with .NET SDK `11.0.100-rc.1.26425.128` and the existing Visual Studio 18/MSVC `14.51.36231` native toolchain; no host software or CI changes were made. `dotnet test DotnetNugetContent.sln -c Release --no-restore` passed (14/14). `scripts/validate-tool.ps1` produced and inspected the top-level 0.1.0 pointer and matching `win-x64` Native AOT package, installed both global-equivalent and local-manifest forms from an isolated local feed, invoked/updated/uninstalled them in temporary state, exercised the installed managed lifecycle and JSON/text contracts, and built an independent `PackageReference` consumer whose output bytes were compared with the workspace source. The installed executable was an AMD64 PE and reported 0.1.0. The pre-correction installed-tool run reported 301-file and 64 MiB streaming checks, a 226-character nested Unicode path and conflict/failure cleanup. Its interrupted-pack test terminated the process after a 20 ms wait without verifying the operation stage. That result is historical and does not yet establish EC-09a interruption safety. Exact criterion/case/gate mappings, executable and package SHA-256 provenance, and per-gate evidence are recorded in `.execution/M0003-windows-tool.md`. EC-09a, AC-09, and the interruption component of VAL-06 are reopened pending corrected evidence; ART-01 final completion audit must be rerun afterwards. Final editorial help review and release publication remain M0004 work.
 
 ## Escalation Boundary
 
