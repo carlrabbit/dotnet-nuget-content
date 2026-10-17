@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -62,7 +63,8 @@ internal static class Cli
           dotnet-nuget-content status [--source <workspace-root>] | status --package <file.nupkg>
           dotnet-nuget-content history [--source <workspace-root>] | history --package <file.nupkg>
           dotnet-nuget-content hash --path <file> [--expect <sha256>]
-        Managed status/history/pack default to the current directory. Pack creates a new version; unpack refuses an existing destination.
+        Managed status/history/pack default to the current directory. Managed pack defaults output to the workspace parent and rejects output inside the workspace.
+        Pack creates a new version; unpack refuses an existing destination.
         """;
 }
 
@@ -105,7 +107,9 @@ internal static class ContentPackages
         var changes = Diff(baseline.Files, files); if (changes.Added.Count + changes.Modified.Count + changes.Deleted.Count == 0) throw new CliException("Workspace content is unchanged; no new package version was created.", 1);
         var manifest = new Manifest { Package = new() { Id = baseline.Package.Id, Version = version.ToNormalizedString() }, Files = files, History = baseline.History.ToList() };
         manifest.History.Add(new() { Version = version.ToNormalizedString(), PreviousVersion = baseline.Package.Version, Changes = changes, Message = message });
-        var output = Path.GetFullPath(outputPath ?? Path.Combine(Environment.CurrentDirectory, $"{manifest.Package.Id}.{version.ToNormalizedString()}.nupkg"));
+        var workspaceParent = Directory.GetParent(root)?.FullName ?? root;
+        var output = Path.GetFullPath(outputPath ?? Path.Combine(workspaceParent, $"{manifest.Package.Id}.{version.ToNormalizedString()}.nupkg"));
+        if (IsPathWithin(root, output)) throw new CliException("Managed package output cannot be inside the workspace.", 1);
         await CreatePackageAsync(manifest, root, output); return output;
     }
     public static async Task UnpackAsync(string packagePath, string destinationPath, string? expectedHash)
@@ -114,7 +118,23 @@ internal static class ContentPackages
         if (expectedHash is not null) { var h = await Sha256Async(package); if (!HashEquals(h, expectedHash)) throw new CliException($"SHA-256 mismatch. Expected {expectedHash}; actual {h}.", 1); }
         var destination = Path.GetFullPath(destinationPath); if (File.Exists(destination) || Directory.Exists(destination)) throw new CliException($"Destination already exists: {destination}", 1);
         var parent = Path.GetDirectoryName(destination)!; Directory.CreateDirectory(parent); var staging = Path.Combine(parent, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp"); Directory.CreateDirectory(staging);
-        try { var (manifest, inventory) = await ReadPackageManifestAsync(package, true); foreach (var file in inventory) { var target = SafeTarget(staging, file.Path); Directory.CreateDirectory(Path.GetDirectoryName(target)!); await using var stream = File.Create(target); await using var input = await OpenContentAsync(package, Prefix + file.Path); await input.CopyToAsync(stream); } var metadata = Path.Combine(staging, ManifestPath); Directory.CreateDirectory(Path.GetDirectoryName(metadata)!); await File.WriteAllBytesAsync(metadata, JsonSerializer.SerializeToUtf8Bytes(manifest, ManifestJsonContext.Default.Manifest)); Directory.Move(staging, destination); }
+        try
+        {
+            var (manifest, inventory) = await ReadPackageManifestAsync(package, true);
+            using var reader = new PackageArchiveReader(package);
+            foreach (var file in inventory)
+            {
+                var target = SafeTarget(staging, file.Path);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                await using var stream = File.Create(target);
+                await using var input = await reader.GetStreamAsync(Prefix + file.Path, CancellationToken.None);
+                await input.CopyToAsync(stream);
+            }
+            var metadata = Path.Combine(staging, ManifestPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(metadata)!);
+            await File.WriteAllBytesAsync(metadata, JsonSerializer.SerializeToUtf8Bytes(manifest, ManifestJsonContext.Default.Manifest));
+            Directory.Move(staging, destination);
+        }
         catch (Exception ex) when (ex is InvalidDataException or PackagingException or System.Xml.XmlException or JsonException or IOException) { throw new CliException("Invalid NuGet package.", 1); }
         finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
     }
@@ -145,16 +165,34 @@ internal static class ContentPackages
         {
             using var reader = new PackageArchiveReader(path); var entries = reader.GetFiles().ToArray(); var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase); foreach (var e in entries) { var n = e.Replace('\\', '/'); ValidateArchivePath(n); if (!names.Add(n)) throw new CliException($"Package contains duplicate path '{n}'.", 1); }
             var meta = entries.SingleOrDefault(e => e.Replace('\\', '/') == ManifestPath) ?? throw new CliException("Package is missing .nuget-content/manifest.json.", 1);
-            await using var ms = new MemoryStream(); await using (var input = await reader.GetStreamAsync(meta, CancellationToken.None)) await input.CopyToAsync(ms); using (var json = JsonDocument.Parse(ms.ToArray())) RejectDuplicateJsonProperties(json.RootElement); var m = JsonSerializer.Deserialize(ms.ToArray(), ManifestJsonContext.Default.Manifest) ?? throw new CliException("Manifest is empty.", 1); ValidateManifest(m);
+            await using var ms = new MemoryStream(); await using (var input = await reader.GetStreamAsync(meta, CancellationToken.None)) await input.CopyToAsync(ms);
+            using (var json = JsonDocument.Parse(ms.ToArray())) ValidateManifestJson(json.RootElement);
+            var manifestBytes = ms.ToArray();
+            var m = JsonSerializer.Deserialize(manifestBytes, ManifestJsonContext.Default.Manifest) ?? throw new CliException("Manifest is empty.", 1); ValidateManifest(m);
             using var ns = reader.GetNuspec(); var nuspec = new NuspecReader(ns); if (!string.Equals(m.Package.Id, nuspec.GetId(), StringComparison.OrdinalIgnoreCase) || ParseVersion(m.Package.Version) != nuspec.GetVersion()) throw new CliException("Manifest package identity/version does not match nuspec.", 1);
-            var payload = entries.Select(e => e.Replace('\\', '/')).Where(e => e.StartsWith(Prefix, StringComparison.Ordinal)).Select(e => e[Prefix.Length..]).OrderBy(x => x, StringComparer.Ordinal).ToList(); var inv = new List<ManifestFile>(); foreach (var rel in payload) { await using var content = await reader.GetStreamAsync(Prefix + rel, CancellationToken.None); var bytes = await ReadAllBytesAsync(content); inv.Add(new() { Path = rel, Size = bytes.LongLength, Sha256 = Convert.ToHexString(SHA256.HashData(bytes)) }); }
+            var payload = entries.Select(e => e.Replace('\\', '/')).Where(e => e.StartsWith(Prefix, StringComparison.Ordinal)).Select(e => e[Prefix.Length..]).OrderBy(x => x, StringComparer.Ordinal).ToList(); var inv = new List<ManifestFile>(); foreach (var rel in payload) { await using var content = await reader.GetStreamAsync(Prefix + rel, CancellationToken.None); var (size, hash) = await HashAndSizeAsync(content); inv.Add(new() { Path = rel, Size = size, Sha256 = hash }); }
             if (verify && !InventoryEqual(m.Files, inv)) throw new CliException("Manifest inventory does not match the package contentFiles payload.", 1); return (m, inv);
         }
         catch (CliException) { throw; }
         catch (Exception ex) when (ex is InvalidDataException or PackagingException or System.Xml.XmlException or JsonException or InvalidOperationException or IOException) { throw new CliException("Invalid NuGet package.", 1); }
     }
-    private static async Task<Stream> OpenContentAsync(string package, string entry) { using var r = new PackageArchiveReader(package); await using var input = await r.GetStreamAsync(entry, CancellationToken.None); return new MemoryStream(await ReadAllBytesAsync(input), false); }
-    private static async Task<byte[]> ReadAllBytesAsync(Stream s) { using var m = new MemoryStream(); await s.CopyToAsync(m); return m.ToArray(); }
+    private static async Task<(long Size, string Sha256)> HashAndSizeAsync(Stream stream)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = ArrayPool<byte>.Shared.Rent(81920);
+        long size = 0;
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length))) != 0)
+            {
+                hash.AppendData(buffer, 0, read);
+                size += read;
+            }
+            return (size, Convert.ToHexString(hash.GetHashAndReset()));
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
     private static async Task<List<ManifestFile>> InventoryAsync(string root)
     {
         var files = new List<ManifestFile>(); var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -162,10 +200,156 @@ internal static class ContentPackages
         files.Sort((a, b) => StringComparer.Ordinal.Compare(a.Path, b.Path)); return files;
     }
     private static ChangeSet Diff(List<ManifestFile> old, List<ManifestFile> now) { var a = old.ToDictionary(f => f.Path, StringComparer.Ordinal); var b = now.ToDictionary(f => f.Path, StringComparer.Ordinal); var c = new ChangeSet(); foreach (var f in now) { if (!a.TryGetValue(f.Path, out var prior)) c.Added.Add(f.Path); else if (prior.Sha256 != f.Sha256) c.Modified.Add(f.Path); } foreach (var f in old) if (!b.ContainsKey(f.Path)) c.Deleted.Add(f.Path); c.Added.Sort(StringComparer.Ordinal); c.Modified.Sort(StringComparer.Ordinal); c.Deleted.Sort(StringComparer.Ordinal); return c; }
-    private static void RejectDuplicateJsonProperties(JsonElement element) { if (element.ValueKind == JsonValueKind.Object) { var names = new HashSet<string>(StringComparer.Ordinal); foreach (var property in element.EnumerateObject()) { if (!names.Add(property.Name)) throw new CliException($"Manifest contains duplicate property '{property.Name}'.", 1); RejectDuplicateJsonProperties(property.Value); } } else if (element.ValueKind == JsonValueKind.Array) { foreach (var child in element.EnumerateArray()) RejectDuplicateJsonProperties(child); } }
+    private static bool IsPathWithin(string root, string candidate)
+    {
+        var relative = Path.GetRelativePath(root, candidate);
+        return relative == "." || (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+    }
     private static bool InventoryEqual(List<ManifestFile> a, List<ManifestFile> b) => a.Count == b.Count && a.Zip(b).All(x => x.First.Path == x.Second.Path && x.First.Size == x.Second.Size && x.First.Sha256 == x.Second.Sha256);
-    private static void ValidateManifest(Manifest m) { if (m.SchemaVersion != 1) throw new CliException($"Unsupported manifest schemaVersion '{m.SchemaVersion}'.", 1); ValidateIdentity(m.Package.Id); if (ParseVersion(m.Package.Version).ToNormalizedString() != m.Package.Version) throw new CliException("Manifest package.version must be normalized.", 1); var versions = new List<NuGetVersion>(); foreach (var h in m.History) { var hv = ParseVersion(h.Version); if (hv.ToNormalizedString() != h.Version) throw new CliException("Manifest history versions must be normalized.", 1); versions.Add(hv); if (h.Message is not null && string.IsNullOrWhiteSpace(h.Message)) throw new CliException("Manifest history message must not be blank.", 1); } if (versions.Count == 0 || m.History[^1].Version != m.Package.Version) throw new CliException("Manifest history must end at package.version.", 1); for (int i = 0; i < versions.Count; i++) { if (i > 0 && (versions[i] <= versions[i - 1] || m.History[i].PreviousVersion != m.History[i - 1].Version)) throw new CliException("Manifest history versions or previousVersion links are inconsistent.", 1); if (i == 0 && m.History[i].PreviousVersion is not null) throw new CliException("Initial history previousVersion must be null.", 1); } var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase); string? prev = null; foreach (var f in m.Files) { ValidateRelative(f.Path); if (!seen.Add(f.Path)) throw new CliException($"Duplicate manifest path '{f.Path}'.", 1); if (!Regex.IsMatch(f.Sha256, "^[0-9A-F]{64}$")) throw new CliException($"Invalid SHA-256 for '{f.Path}'.", 1); if (prev is not null && StringComparer.Ordinal.Compare(prev, f.Path) >= 0) throw new CliException("Manifest files must be in ordinal path order.", 1); prev = f.Path; } foreach (var h in m.History) { var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase); foreach (var list in new[] { h.Changes.Added, h.Changes.Modified, h.Changes.Deleted }) { string? p = null; foreach (var x in list) { ValidateRelative(x); if (!all.Add(x) || p is not null && StringComparer.Ordinal.Compare(p, x) >= 0) throw new CliException("History change paths must be distinct and ordinally sorted.", 1); p = x; } } } if (m.History.Count == 1 && !m.History[0].Changes.Added.SequenceEqual(m.Files.Select(f => f.Path), StringComparer.Ordinal)) throw new CliException("Initial history added paths must match the manifest file inventory.", 1); }
-    private static async Task<Manifest> ReadManifestFileAsync(string path) { if (!File.Exists(path)) throw new CliException($"Managed workspace marker not found: {path}", 1); try { var bytes = await File.ReadAllBytesAsync(path); using (var json = JsonDocument.Parse(bytes)) RejectDuplicateJsonProperties(json.RootElement); var m = JsonSerializer.Deserialize(bytes, ManifestJsonContext.Default.Manifest) ?? throw new JsonException(); ValidateManifest(m); return m; } catch (Exception e) when (e is JsonException or IOException) { throw new CliException($"Invalid managed workspace marker '{path}': {e.Message}", 1); } }
+    internal static void ValidateManifestJson(JsonElement root)
+    {
+        ValidateObject(root, "manifest", ["schemaVersion", "package", "files", "history"]);
+        var schemaVersion = root.GetProperty("schemaVersion");
+        if (schemaVersion.ValueKind != JsonValueKind.Number || !schemaVersion.TryGetInt32(out var number) || number != 1)
+            throw new CliException("Manifest schemaVersion must be the integer 1.", 1);
+
+        var package = root.GetProperty("package");
+        ValidateObject(package, "package", ["id", "version"]);
+        RequireString(package.GetProperty("id"), "package.id");
+        RequireString(package.GetProperty("version"), "package.version");
+
+        var files = root.GetProperty("files");
+        RequireArray(files, "files");
+        foreach (var file in files.EnumerateArray())
+        {
+            ValidateObject(file, "files[]", ["path", "size", "sha256"]);
+            RequireString(file.GetProperty("path"), "files[].path");
+            var size = file.GetProperty("size");
+            if (size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var fileSize) || fileSize < 0)
+                throw new CliException("Manifest files[].size must be a non-negative integer.", 1);
+            var sha = RequireString(file.GetProperty("sha256"), "files[].sha256");
+            if (!Regex.IsMatch(sha, "^[0-9A-F]{64}$", RegexOptions.CultureInvariant))
+                throw new CliException("Manifest files[].sha256 must be 64 uppercase hexadecimal characters.", 1);
+        }
+
+        var history = root.GetProperty("history");
+        RequireArray(history, "history");
+        if (history.GetArrayLength() == 0) throw new CliException("Manifest history must contain at least one entry.", 1);
+        foreach (var record in history.EnumerateArray())
+        {
+            ValidateObject(record, "history[]", ["version", "previousVersion", "changes"], ["message"]);
+            RequireString(record.GetProperty("version"), "history[].version");
+            var previous = record.GetProperty("previousVersion");
+            if (previous.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
+                throw new CliException("Manifest history[].previousVersion must be a string or null.", 1);
+            if (previous.ValueKind == JsonValueKind.String) RequireString(previous, "history[].previousVersion");
+            if (record.TryGetProperty("message", out var message)) RequireString(message, "history[].message");
+
+            var changes = record.GetProperty("changes");
+            ValidateObject(changes, "history[].changes", ["added", "modified", "deleted"]);
+            foreach (var name in new[] { "added", "modified", "deleted" })
+            {
+                var paths = changes.GetProperty(name);
+                RequireArray(paths, $"history[].changes.{name}");
+                var unique = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var path in paths.EnumerateArray())
+                    if (!unique.Add(RequireString(path, $"history[].changes.{name}[]")))
+                        throw new CliException($"Manifest history[].changes.{name} contains a duplicate path.", 1);
+            }
+        }
+    }
+
+    private static void ValidateObject(JsonElement value, string label, string[] required, string[]? optional = null)
+    {
+        if (value.ValueKind != JsonValueKind.Object) throw new CliException($"Manifest {label} must be an object.", 1);
+        var allowed = required.Concat(optional ?? []).ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!seen.Add(property.Name)) throw new CliException($"Manifest contains duplicate property '{property.Name}'.", 1);
+            if (!allowed.Contains(property.Name)) throw new CliException($"Manifest {label} contains unknown property '{property.Name}'.", 1);
+        }
+        foreach (var name in required)
+            if (!seen.Contains(name)) throw new CliException($"Manifest {label} is missing required property '{name}'.", 1);
+    }
+
+    private static void RequireArray(JsonElement value, string label)
+    {
+        if (value.ValueKind != JsonValueKind.Array) throw new CliException($"Manifest {label} must be an array.", 1);
+    }
+
+    private static string RequireString(JsonElement value, string label)
+    {
+        if (value.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(value.GetString()))
+            throw new CliException($"Manifest {label} must be a non-empty string.", 1);
+        return value.GetString()!;
+    }
+
+    internal static void ValidateManifest(Manifest m)
+    {
+        if (m.SchemaVersion != 1) throw new CliException($"Unsupported manifest schemaVersion '{m.SchemaVersion}'.", 1);
+        ValidateIdentity(m.Package.Id);
+        if (ParseVersion(m.Package.Version).ToNormalizedString() != m.Package.Version) throw new CliException("Manifest package.version must be normalized.", 1);
+        var versions = new List<NuGetVersion>();
+        foreach (var h in m.History)
+        {
+            var hv = ParseVersion(h.Version);
+            if (hv.ToNormalizedString() != h.Version) throw new CliException("Manifest history versions must be normalized.", 1);
+            versions.Add(hv);
+            if (h.Message is not null && string.IsNullOrWhiteSpace(h.Message)) throw new CliException("Manifest history message must not be blank.", 1);
+        }
+        if (versions.Count == 0 || m.History[^1].Version != m.Package.Version) throw new CliException("Manifest history must end at package.version.", 1);
+        for (int i = 0; i < versions.Count; i++)
+        {
+            if (i > 0 && (versions[i] <= versions[i - 1] || m.History[i].PreviousVersion != m.History[i - 1].Version))
+                throw new CliException("Manifest history versions or previousVersion links are inconsistent.", 1);
+            if (i == 0 && m.History[i].PreviousVersion is not null) throw new CliException("Initial history previousVersion must be null.", 1);
+        }
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? prev = null;
+        foreach (var f in m.Files)
+        {
+            ValidateRelative(f.Path);
+            if (!seen.Add(f.Path)) throw new CliException($"Duplicate manifest path '{f.Path}'.", 1);
+            if (!Regex.IsMatch(f.Sha256, "^[0-9A-F]{64}$")) throw new CliException($"Invalid SHA-256 for '{f.Path}'.", 1);
+            if (prev is not null && StringComparer.Ordinal.Compare(prev, f.Path) >= 0) throw new CliException("Manifest files must be in ordinal path order.", 1);
+            prev = f.Path;
+        }
+        foreach (var h in m.History)
+        {
+            var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var list in new[] { h.Changes.Added, h.Changes.Modified, h.Changes.Deleted })
+            {
+                string? p = null;
+                foreach (var x in list)
+                {
+                    ValidateRelative(x);
+                    if (!all.Add(x) || p is not null && StringComparer.Ordinal.Compare(p, x) >= 0) throw new CliException("History change paths must be distinct and ordinally sorted.", 1);
+                    p = x;
+                }
+            }
+        }
+        var initial = m.History[0];
+        if (initial.PreviousVersion is not null || initial.Changes.Added.Count == 0 || initial.Changes.Modified.Count != 0 || initial.Changes.Deleted.Count != 0)
+            throw new CliException("Initial history must have a null predecessor and empty modified/deleted lists.", 1);
+        if (m.History.Count == 1 && !initial.Changes.Added.SequenceEqual(m.Files.Select(f => f.Path), StringComparer.Ordinal))
+            throw new CliException("Initial history added paths must match the manifest file inventory.", 1);
+    }
+
+    private static async Task<Manifest> ReadManifestFileAsync(string path)
+    {
+        if (!File.Exists(path)) throw new CliException($"Managed workspace marker not found: {path}", 1);
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(path);
+            using (var json = JsonDocument.Parse(bytes)) ValidateManifestJson(json.RootElement);
+            var manifest = JsonSerializer.Deserialize(bytes, ManifestJsonContext.Default.Manifest) ?? throw new JsonException();
+            ValidateManifest(manifest);
+            return manifest;
+        }
+        catch (CliException) { throw; }
+        catch (Exception e) when (e is JsonException or IOException) { throw new CliException($"Invalid managed workspace marker '{path}': {e.Message}", 1); }
+    }
     private static string ResolveWorkspace(string root) { var p = Path.GetFullPath(root); if (!Directory.Exists(p)) throw new CliException($"Workspace directory not found: {p}", 1); RejectReparsePoints(p); return p; }
     private static NuGetVersion ParseVersion(string s) => s.Contains('*') || !NuGetVersion.TryParse(s, out var v) ? throw new CliException($"Invalid exact NuGet version '{s}'.") : v;
     private static void ValidateIdentity(string id) { if (!IdPattern.IsMatch(id)) throw new CliException($"Invalid NuGet package ID '{id}'."); }

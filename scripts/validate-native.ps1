@@ -92,9 +92,10 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $destination 'added.json'), '{"added":true}')
     $changed = Invoke-Native @('status', '--source', $destination)
     if ($changed.ExitCode -ne 0 -or $changed.Stdout -notmatch 'Added: added.json' -or $changed.Stdout -notmatch 'Modified: nested/deeper/readme.txt' -or $changed.Stdout -notmatch 'Deleted: nested/payload.bin') { throw 'Managed status did not distinguish added, modified, and deleted files.' }
-    $implicitClean = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--output', (Join-Path $feed 'sample.native.1.2.4.nupkg'), '--message', 'native lifecycle') $destination
-    if ($implicitClean.ExitCode -ne 0 -or $implicitClean.Stderr -ne '') { throw "Implicit-root managed pack failed: $($implicitClean.Stderr)" }
-    $managedPackage = Join-Path $feed 'sample.native.1.2.4.nupkg'
+    $managedPackage = Join-Path $work 'sample.native.1.2.4.nupkg'
+    $implicitPack = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--message', 'native lifecycle') $destination
+    Assert-NativeResult $implicitPack 0 "Created $managedPackage$([Environment]::NewLine)" '' 'Implicit-root managed pack default output'
+    if ((Invoke-Native @('status', '--source', $destination)).Stdout -notmatch 'Added: added.json') { throw 'Default package output contaminated the workspace inventory.' }
     $history = Invoke-Native @('history', '--package', $managedPackage)
     if ($history.ExitCode -ne 0 -or $history.Stdout -notmatch '1.2.3' -or $history.Stdout -notmatch '1.2.4' -or $history.Stdout -notmatch 'native lifecycle') { throw 'Managed package history did not show ordered lineage and its supplied message.' }
     $implicitHistory = Invoke-CapturedProcess $executable @('history') $destination
@@ -142,10 +143,20 @@ try {
     if (@(Get-ChildItem -LiteralPath $work -Directory -Force -Filter '.partial output with spaces.*.tmp').Count -ne 0) { throw 'Failed extraction left a staging directory.' }
 
     $consumerScript = Join-Path $PSScriptRoot 'validate-consumer.ps1'
-    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage)
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage, '-ExpectedSource', $destination)
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     if ($consumer.ExitCode -ne 0) { throw "Native NuGet consumer validation failed with exit code $($consumer.ExitCode)." }
+
+    [System.IO.File]::WriteAllText((Join-Path $destination 'next.json'), '{"next":true}')
+    $explicitDefault = Invoke-Native @('pack', '--version', '1.2.5', '--source', $destination)
+    $explicitPackage = Join-Path $work 'sample.native.1.2.5.nupkg'
+    Assert-NativeResult $explicitDefault 0 "Created $explicitPackage$([Environment]::NewLine)" '' 'Explicit-root managed pack default output'
+    $workspaceStatus = Invoke-Native @('status', '--source', $destination)
+    if ($workspaceStatus.ExitCode -ne 0 -or $workspaceStatus.Stdout -notmatch 'next.json' -or $workspaceStatus.Stdout -match 'sample\.native\.1\.2\.[45]\.nupkg') { throw "Default package output was not kept outside the explicit workspace: $($workspaceStatus.Stdout)" }
+    $insideOutput = Join-Path $destination 'self.nupkg'
+    $insideResult = Invoke-Native @('pack', '--version', '1.2.6', '--source', $destination, '--output', $insideOutput)
+    if ($insideResult.ExitCode -ne 1 -or $insideResult.Stdout -ne '' -or $insideResult.Stderr -notmatch 'Managed package output cannot be inside the workspace' -or (Test-Path -LiteralPath $insideOutput)) { throw 'Explicit output inside the managed workspace was not rejected cleanly.' }
 
     $item = Get-Item -LiteralPath $executable
     $sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash

@@ -73,5 +73,93 @@ public sealed class ManagedContentTests : IDisposable
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", malformedHistory));
     }
 
+    [Fact]
+    public async Task ManagedDefaultOutputsUseWorkspaceParentAndExplicitInWorkspaceOutputIsRejected()
+    {
+        var source = Path.Combine(root, "source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(source, "content.txt"), "initial");
+        var initial = Path.Combine(root, "initial.nupkg");
+        await ContentPackages.PackInitialAsync("sample.output", "1.0.0", source, initial);
+
+        var implicitWorkspace = Path.Combine(root, "implicit");
+        await ContentPackages.UnpackAsync(initial, implicitWorkspace, null);
+        await File.WriteAllTextAsync(Path.Combine(implicitWorkspace, "content.txt"), "updated implicit");
+        var implicitOutput = await ContentPackages.PackManagedAsync(implicitWorkspace, "1.1.0", null, null);
+        Assert.Equal(Path.Combine(root, "sample.output.1.1.0.nupkg"), implicitOutput);
+        Assert.DoesNotContain("sample.output.1.1.0.nupkg", await ContentPackages.StatusAsync(implicitWorkspace, null));
+
+        var explicitWorkspace = Path.Combine(root, "explicit");
+        await ContentPackages.UnpackAsync(initial, explicitWorkspace, null);
+        await File.WriteAllTextAsync(Path.Combine(explicitWorkspace, "content.txt"), "updated explicit");
+        var explicitOutput = await ContentPackages.PackManagedAsync(explicitWorkspace, "1.2.0", null, null);
+        Assert.Equal(Path.Combine(root, "sample.output.1.2.0.nupkg"), explicitOutput);
+        await File.WriteAllTextAsync(Path.Combine(explicitWorkspace, "content.txt"), "another update");
+        var inside = Path.Combine(explicitWorkspace, "nested", "self.nupkg");
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(explicitWorkspace, "1.3.0", inside, null));
+        Assert.False(File.Exists(inside));
+    }
+
+    [Fact]
+    public async Task SchemaValidationRejectsMissingNullWrongTypedAndInvalidNestedProperties()
+    {
+        var valid = """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":[],"deleted":[]}}]}""";
+        string[] malformed =
+        [
+            valid.Replace("\"files\":[{\"path\":\"x\",\"size\":1,\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"}],", ""),
+            """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[],"history":[]}""",
+            valid.Replace("\"package\":{\"id\":\"sample\",\"version\":\"1.0.0\"}", "\"package\":null"),
+            valid.Replace("\"size\":1", "\"size\":\"1\""),
+            valid.Replace("\"changes\":{\"added\":[\"x\"],\"modified\":[],\"deleted\":[]}", "\"changes\":null"),
+            valid.Replace("\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"", "\"sha256\":null"),
+            valid.Replace("\"added\":[\"x\"]", "\"added\":null"),
+            valid.Replace(",\"deleted\":[]", ""),
+            valid.Replace("\"deleted\":[]", "\"deleted\":[],\"extra\":[]")
+        ];
+        foreach (var json in malformed)
+        {
+            using var document = JsonDocument.Parse(json);
+            var error = Assert.Throws<CliException>(() => ContentPackages.ValidateManifestJson(document.RootElement));
+            Assert.Equal(1, error.ExitCode);
+            Assert.StartsWith("Manifest ", error.Message);
+        }
+
+        var badInitial = """{"schemaVersion":1,"package":{"id":"sample","version":"1.1.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":["y"],"deleted":[]}},{"version":"1.1.0","previousVersion":"1.0.0","changes":{"added":[],"modified":[],"deleted":[]}}]}""";
+        using var badInitialDocument = JsonDocument.Parse(badInitial);
+        ContentPackages.ValidateManifestJson(badInitialDocument.RootElement);
+        var badInitialManifest = JsonSerializer.Deserialize(badInitial, ManifestJsonContext.Default.Manifest)!;
+        var semanticError = Assert.Throws<CliException>(() => ContentPackages.ValidateManifest(badInitialManifest));
+        Assert.Contains("Initial history", semanticError.Message);
+        var badPredecessor = badInitial.Replace("\"previousVersion\":null", "\"previousVersion\":\"0.9.0\"").Replace("\"modified\":[\"y\"]", "\"modified\":[]");
+        var badPredecessorManifest = JsonSerializer.Deserialize(badPredecessor, ManifestJsonContext.Default.Manifest)!;
+        var predecessorError = Assert.Throws<CliException>(() => ContentPackages.ValidateManifest(badPredecessorManifest));
+        Assert.Contains("Initial history", predecessorError.Message);
+    }
+
+    [Fact]
+    public async Task LargeBinaryPackageValidationAndExtractionUseBoundedMemoryStreams()
+    {
+        const int fileSize = 64 * 1024 * 1024;
+        var source = Path.Combine(root, "large-source");
+        Directory.CreateDirectory(source);
+        var payload = Path.Combine(source, "large.bin");
+        await using (var output = new FileStream(payload, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            var block = new byte[64 * 1024];
+            for (var written = 0; written < fileSize; written += block.Length) await output.WriteAsync(block);
+        }
+        var package = Path.Combine(root, "large.nupkg");
+        var destination = Path.Combine(root, "large-unpacked");
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        await ContentPackages.PackInitialAsync("sample.large", "1.0.0", source, package);
+        Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", package));
+        await ContentPackages.UnpackAsync(package, destination, null);
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+        Assert.True(allocated < fileSize, $"Package operations allocated {allocated:N0} bytes for a {fileSize:N0}-byte file; payload-sized buffering is suspected.");
+        Assert.Equal(new FileInfo(payload).Length, new FileInfo(Path.Combine(destination, "large.bin")).Length);
+        Assert.Equal(await ContentPackages.Sha256Async(payload), await ContentPackages.Sha256Async(Path.Combine(destination, "large.bin")));
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }
