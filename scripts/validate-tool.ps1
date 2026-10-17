@@ -239,8 +239,48 @@ try {
     $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     $largeStream = [System.IO.File]::OpenWrite($largePath)
     try { for ($i = 0; $i -lt 64; $i++) { $random.GetBytes($buffer); $largeStream.Write($buffer) } } finally { $largeStream.Dispose(); $random.Dispose() }
-    $largePack = Invoke-Tool @('pack', '--id', 'sample.large', '--version', '1.0.0', '--source', $largeSource, '--output', $largePackage)
-    Assert-ToolResult $largePack 0 '64 MiB installed tool pack'
+    $largePackInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $largePackInfo.FileName = $installedExe
+    $largePackInfo.UseShellExecute = $false
+    $largePackInfo.WorkingDirectory = $work
+    $largePackInfo.RedirectStandardOutput = $true
+    $largePackInfo.RedirectStandardError = $true
+    foreach ($argument in @('pack', '--id', 'sample.large', '--version', '1.0.0', '--source', $largeSource, '--output', $largePackage)) { [void]$largePackInfo.ArgumentList.Add($argument) }
+    $largePackProcess = [System.Diagnostics.Process]::Start($largePackInfo)
+    $largeStdoutTask = $largePackProcess.StandardOutput.ReadToEndAsync()
+    $largeStderrTask = $largePackProcess.StandardError.ReadToEndAsync()
+    $largeStageObserved = $false
+    $largeFinalValidWhenObserved = $false
+    $largePackWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $largePackProcess.HasExited -and $largePackWatch.Elapsed.TotalSeconds -lt 60) {
+        $stagingCandidates = [System.IO.Directory]::EnumerateFiles($work, ([System.IO.Path]::GetFileName($largePackage) + '.*.tmp'))
+        foreach ($candidate in $stagingCandidates) {
+            if ([System.IO.FileInfo]::new($candidate).Length -ge 65536) {
+                $largeStageObserved = $true
+                break
+            }
+        }
+        if (Test-Path -LiteralPath $largePackage) {
+            $activeLargeStages = @([System.IO.Directory]::EnumerateFiles($work, ([System.IO.Path]::GetFileName($largePackage) + '.*.tmp')) | Where-Object { [System.IO.FileInfo]::new($_).Length -ge 65536 })
+            if ($activeLargeStages.Count -gt 0) { throw 'A successful pack exposed its final package path while staged package bytes were still being written.' }
+            $publishedArchive = [System.IO.Compression.ZipFile]::OpenRead($largePackage)
+            try { $largeFinalValidWhenObserved = $publishedArchive.Entries.Count -gt 0 } finally { $publishedArchive.Dispose() }
+            if (-not $largeFinalValidWhenObserved) { throw 'The final package path became visible before a readable package was published.' }
+        }
+        Start-Sleep -Milliseconds 2
+    }
+    $largePackWatch.Stop()
+    if (-not $largePackProcess.HasExited) { $largePackProcess.Kill($true); $largePackProcess.WaitForExit(); throw 'Successful atomic-publication check exceeded 60 seconds.' }
+    $largePackProcess.WaitForExit()
+    $largeStdout = $largeStdoutTask.GetAwaiter().GetResult()
+    $largeStderr = $largeStderrTask.GetAwaiter().GetResult()
+    $largeExitCode = $largePackProcess.ExitCode
+    $largePackProcess.Dispose()
+    if ($largeExitCode -ne 0) { throw "64 MiB installed tool pack failed: exit=$largeExitCode stdout=[$largeStdout] stderr=[$largeStderr]" }
+    if (-not (Test-Path -LiteralPath $largePackage -PathType Leaf)) { throw 'Successful pack did not publish its final package.' }
+    $finalArchive = [System.IO.Compression.ZipFile]::OpenRead($largePackage)
+    try { $largeFinalValidWhenObserved = $largeFinalValidWhenObserved -or $finalArchive.Entries.Count -gt 0 } finally { $finalArchive.Dispose() }
+    if (-not $largeStageObserved -or -not $largeFinalValidWhenObserved) { throw 'The validation did not observe staged writes followed by a readable final package.' }
     $largeStatus = Invoke-Tool @('status', '--package', $largePackage, '--json')
     Assert-ToolResult $largeStatus 0 '64 MiB package streaming validation'
     $largeUnpack = Invoke-Tool @('unpack', '--package', $largePackage, '--destination', $largeWorkspace)
@@ -249,18 +289,43 @@ try {
 
     $interruptedPath = Join-Path $work 'interrupted managed package.nupkg'
     $markerBeforeInterrupt = [System.IO.File]::ReadAllBytes($markerPath)
-    Copy-Item -LiteralPath $largePath -Destination (Join-Path $workspace 'interrupt-large.bin')
+    $interruptPayload = Join-Path $workspace 'interrupt-large.bin'
+    Copy-Item -LiteralPath $largePath -Destination $interruptPayload
+    $interruptPayloadHash = (Get-FileHash -LiteralPath $interruptPayload -Algorithm SHA256).Hash
     $interruptInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $interruptInfo.FileName = $installedExe
     $interruptInfo.UseShellExecute = $false
     $interruptInfo.WorkingDirectory = $work
     foreach ($argument in @('pack', '--source', $workspace, '--version', '1.2.0', '--output', $interruptedPath)) { [void]$interruptInfo.ArgumentList.Add($argument) }
     $interruptedProcess = [System.Diagnostics.Process]::Start($interruptInfo)
-    if ($interruptedProcess.WaitForExit(20)) { throw 'The large managed pack completed before the interruption check could terminate it.' }
-    $interruptedProcess.Kill($true)
-    $interruptedProcess.WaitForExit()
+    $stageFile = $null
+    $stageWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        while (-not $interruptedProcess.HasExited -and $stageWatch.Elapsed.TotalSeconds -lt 30) {
+            $stagingCandidates = [System.IO.Directory]::EnumerateFiles($work, ([System.IO.Path]::GetFileName($interruptedPath) + '.*.tmp'))
+            foreach ($candidate in $stagingCandidates) {
+                if ([System.IO.FileInfo]::new($candidate).Length -ge 65536) { $stageFile = $candidate; break }
+            }
+            if ($stageFile) { break }
+            Start-Sleep -Milliseconds 2
+        }
+        if (-not $stageFile) { throw 'Could not observe the managed package staging file exceed 64 KiB before process exit or the 30-second observation limit.' }
+        $stageLengthAtTermination = [System.IO.FileInfo]::new($stageFile).Length
+        if ($stageFile -notmatch '\.nupkg\.[0-9a-f]{32}\.tmp$') { throw "Observed staging path was not uniquely named: $stageFile" }
+        if (Test-Path -LiteralPath $interruptedPath) { throw 'Final package path became visible while the staging file was still being written.' }
+        $interruptedProcess.Kill($true)
+        $interruptedProcess.WaitForExit()
+    } catch {
+        if (-not $interruptedProcess.HasExited) { $interruptedProcess.Kill($true); $interruptedProcess.WaitForExit() }
+        throw
+    } finally {
+        $stageWatch.Stop()
+        $interruptedProcess.Dispose()
+    }
     if (Test-Path -LiteralPath $interruptedPath) { throw 'Interrupted managed pack committed a package.' }
-    if (@(Get-ChildItem -LiteralPath $work -File -Filter 'interrupted managed package.nupkg.*.tmp').Count -ne 0) { throw 'Interrupted managed pack left a partial package staging file.' }
+    $remainingStage = Test-Path -LiteralPath $stageFile
+    if ($remainingStage -and ([System.IO.Path]::GetExtension($stageFile) -ne '.tmp' -or (Get-Item -LiteralPath $stageFile).Length -lt 65536)) { throw 'Abrupt termination left an unexpected staging remnant.' }
+    if ((Get-FileHash -LiteralPath $interruptPayload -Algorithm SHA256).Hash -ne $interruptPayloadHash) { throw 'Interrupted managed pack changed source content.' }
     if ([Convert]::ToHexString($markerBeforeInterrupt) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($markerPath))) { throw 'Interrupted managed pack changed its baseline marker.' }
 
     $conflictOutput = Join-Path $work 'preserved output.nupkg'
@@ -276,6 +341,7 @@ try {
     $badUnpack = Invoke-Tool @('unpack', '--package', $badPackagePath, '--destination', $failedDestination)
     Assert-ToolResult $badUnpack 1 'Malformed package extraction cleanup'
     if (Test-Path -LiteralPath $failedDestination) { throw 'Malformed package left a partial extraction destination.' }
+    if (@(Get-ChildItem -LiteralPath $work -Directory -Filter '.failed extraction.*.tmp').Count -ne 0) { throw 'Handled malformed-package failure left an extraction staging directory.' }
 
     $updateTop = Join-Path $work 'update pack'
     New-ToolPackage $updateVersion $updateTop
@@ -303,7 +369,8 @@ try {
     Write-Output "Top-level package SHA-256: $((Get-FileHash -LiteralPath $topPackage -Algorithm SHA256).Hash)"
     Write-Output "win-x64 package SHA-256: $((Get-FileHash -LiteralPath $ridPackage -Algorithm SHA256).Hash)"
     Write-Output "Longest tested Unicode path length: $($unicodePath.Length) characters"
-    Write-Output 'Installed lifecycle, JSON/text streams, independent consumer byte oracle, 301 files, nested Unicode path, 64 MiB payload, interruption, and conflict cleanup passed.'
+    Write-Output "Forced termination observed a $stageLengthAtTermination-byte staging file; final path stayed absent; staging remnant after kill: $remainingStage."
+    Write-Output 'Handled malformed-package failure separately removed its staging directory; installed lifecycle, JSON/text streams, independent consumer byte oracle, 301 files, nested Unicode path, 64 MiB payload, and conflict checks passed.'
 }
 finally {
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
