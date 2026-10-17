@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Lifecycle state | ready (human license decision may block completion if missing) |
+| Lifecycle state | done |
 | Mode | ai-executed-human-reviewed |
 | Baseline implementation model | project default; guide 0.9.1 |
 | Baseline executor readiness | confirmed for technical work |
@@ -100,7 +100,7 @@ Implementation derives bounded work packages, reconciles all seeded rows, runs e
 
 ## Completion Evidence
 
-Implementation-owned after final audit. Planning has run no build or publication tests.
+Completed on the authorized local Windows x64 host with .NET SDK `11.0.100-rc.1.26425.128` and existing MSVC x64 compiler `19.51.36257`; no software was installed and no CI or host configuration was changed. Release tests passed 14/14. The exact top-level and `win-x64` 1.0.0 packages were built, metadata/README/license/RID inspected, installed through isolated global-equivalent and local-manifest tool surfaces, exercised through update/uninstall and managed lifecycle, and consumed by an independent `PackageReference` project whose output bytes were compared to the workspace source. The candidate report contains source revision, toolchain, installed validation receipts and independently verified package hashes. The publish script's local preparation and mock ordering/failure/refusal/tamper checks passed. No package was published; see `.execution/M0004-release-candidate.md` for criterion-specific evidence and the exact candidate artifact paths/hashes.
 
 ## Escalation Boundary
 
