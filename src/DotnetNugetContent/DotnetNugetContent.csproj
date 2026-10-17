@@ -6,6 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Version>0.1.0</Version>
+    <PackageId>dotnet-nuget-content</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-nuget-content</ToolCommandName>
+    <ToolPackageRuntimeIdentifiers>win-x64</ToolPackageRuntimeIdentifiers>
     <AssemblyName>dotnet-nuget-content</AssemblyName>
     <PublishAot>true</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>

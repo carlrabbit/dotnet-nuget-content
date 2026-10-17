@@ -1,0 +1,8 @@
+# Windows .NET tool distribution — M0003 authority
+
+- **NuGet .NET tool is the only distribution/install channel.** Package ID and command `dotnet-nuget-content`; support global and local tool-manifest installations. No standalone ZIP/exe download, winget, installers, or other mechanisms.
+- **Only win-x64 Native AOT** for 1.0. Use SDK 11 RID-specific .NET tool format: a top-level tool pointer `.nupkg` and matching-version `win-x64` AOT tool package. Never provide an `any` fallback or Linux/macOS/ARM builds. A later portable non-AOT variant is outside scope.
+- Produce reproducible local-feed packages and verify real installed tool shims (not loose `dotnet publish` binaries), tool update and uninstall. Installed executable runs without a managed .NET runtime, but installing via `dotnet tool` requires the .NET CLI/SDK.
+- Native tool package version equals top-level package version and reported `--version`; verify package metadata and RID selection. For AOT, use Windows-native compiler/linker; `dotnet pack -r win-x64` produces the RID-specific package, and regular pack produces top-level pointer. See https://learn.microsoft.com/dotnet/core/tools/rid-specific-tools .
+- M0003 does NOT publish to nuget.org, produce GitHub Releases, or set up release automation; defer that to M0004.
+- **Execution environment:** Existing authorized local Windows x64 with .NET 11 SDK, C++ native AOT prerequisites and PowerShell. Temporary isolated feeds, NuGet settings, directories, and tool-install surfaces permitted. No software installs, host configuration changes or new/modified CI workflows authorized. If prerequisites missing, report blocked rather than improvising provisioning or hosted substitution.

@@ -32,12 +32,26 @@ internal static class Cli
                     await ContentPackages.UnpackAsync(Required(options, "package"), Required(options, "destination"), options.GetValueOrDefault("sha256"));
                     Console.Out.WriteLine($"Extracted to {Path.GetFullPath(options["destination"])}"); return 0;
                 case "status":
-                    EnsureOptions(options, "source", "package");
-                    var status = await ContentPackages.StatusAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
-                    Console.Out.WriteLine(status); return 0;
+                    EnsureOptions(options, "source", "package", "json");
+                    EnsureExclusive(options, "source", "package");
+                    if (options.ContainsKey("json"))
+                    {
+                        var result = await ContentPackages.StatusJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
+                        Console.Out.WriteLine(result);
+                    }
+                    else
+                    {
+                        var status = await ContentPackages.StatusAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
+                        Console.Out.WriteLine(status);
+                    }
+                    return 0;
                 case "history":
-                    EnsureOptions(options, "source", "package");
-                    Console.Out.WriteLine(await ContentPackages.HistoryAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"))); return 0;
+                    EnsureOptions(options, "source", "package", "json");
+                    EnsureExclusive(options, "source", "package");
+                    Console.Out.WriteLine(options.ContainsKey("json")
+                        ? await ContentPackages.HistoryJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"))
+                        : await ContentPackages.HistoryAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package")));
+                    return 0;
                 case "hash":
                     EnsureOptions(options, "path", "expect"); var path = Path.GetFullPath(Required(options, "path"));
                     if (!File.Exists(path)) throw new CliException($"File not found: {path}", 1);
@@ -50,9 +64,10 @@ internal static class Cli
         catch (CliException ex) { Console.Error.WriteLine($"error: {ex.Message}"); return ex.ExitCode; }
         catch (Exception ex) { Console.Error.WriteLine($"error: {ex.Message}"); return 1; }
     }
-    private static Dictionary<string, string> ParseOptions(string[] args) { var d = new Dictionary<string, string>(StringComparer.Ordinal); for (int i = 0; i < args.Length; i++) { if (!args[i].StartsWith("--") || i + 1 >= args.Length || args[i + 1].StartsWith("--")) throw new CliException($"Expected an option and value, got '{args[i]}'."); if (!d.TryAdd(args[i][2..], args[++i])) throw new CliException($"Option '{args[i - 1]}' was supplied more than once."); } return d; }
+    private static Dictionary<string, string> ParseOptions(string[] args) { var d = new Dictionary<string, string>(StringComparer.Ordinal); for (int i = 0; i < args.Length; i++) { if (!args[i].StartsWith("--")) throw new CliException($"Expected an option and value, got '{args[i]}'."); var key = args[i][2..]; var value = key == "json" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'."); if (!d.TryAdd(key, value)) throw new CliException($"Option '{args[i]}' was supplied more than once."); } return d; }
     private static string Required(Dictionary<string, string> d, string k) => d.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v) ? v : throw new CliException($"Missing required option '--{k}'.");
     private static void EnsureOptions(Dictionary<string, string> d, params string[] allowed) { var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal)); if (bad is not null) throw new CliException($"Unknown option '--{bad}'."); }
+    private static void EnsureExclusive(Dictionary<string, string> d, string first, string second) { if (d.ContainsKey(first) && d.ContainsKey(second)) throw new CliException($"Options '--{first}' and '--{second}' cannot be used together."); }
     private const string HelpText = """
         dotnet-nuget-content — manage immutable NuGet content snapshots
         Usage:
@@ -60,8 +75,8 @@ internal static class Cli
           dotnet-nuget-content pack --id <id> --version <version> --source <directory> --output <file.nupkg>
           dotnet-nuget-content pack --version <version> [--source <workspace-root>] [--output <file.nupkg>] [--message <text>]
           dotnet-nuget-content unpack --package <file.nupkg> --destination <directory> [--sha256 <hex>]
-          dotnet-nuget-content status [--source <workspace-root>] | status --package <file.nupkg>
-          dotnet-nuget-content history [--source <workspace-root>] | history --package <file.nupkg>
+          dotnet-nuget-content status [--source <workspace-root> | --package <file.nupkg>] [--json]
+          dotnet-nuget-content history [--source <workspace-root> | --package <file.nupkg>] [--json]
           dotnet-nuget-content hash --path <file> [--expect <sha256>]
         Managed status/history/pack default to the current directory. Managed pack defaults output to the workspace parent and rejects output inside the workspace.
         Pack creates a new version; unpack refuses an existing destination.
@@ -81,8 +96,17 @@ internal sealed class PackageIdentity { public string Id { get; set; } = ""; pub
 internal sealed class ManifestFile { public string Path { get; set; } = ""; public long Size { get; set; } public string Sha256 { get; set; } = ""; }
 internal sealed class HistoryRecord { public string Version { get; set; } = ""; public string? PreviousVersion { get; set; } public ChangeSet Changes { get; set; } = new(); [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Message { get; set; } }
 internal sealed class ChangeSet { public List<string> Added { get; set; } = []; public List<string> Modified { get; set; } = []; public List<string> Deleted { get; set; } = []; }
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+internal sealed class JsonPackageIdentity { public string Id { get; set; } = ""; public string Version { get; set; } = ""; }
+internal sealed class JsonChanges { public List<string> Added { get; set; } = []; public List<string> Modified { get; set; } = []; public List<string> Deleted { get; set; } = []; }
+internal sealed class JsonHistoryRecord { public string Version { get; set; } = ""; public string? PreviousVersion { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Message { get; set; } public JsonChanges Changes { get; set; } = new(); }
+internal sealed class WorkspaceStatusResult { public int SchemaVersion { get; set; } = 1; public string Kind { get; set; } = "workspace"; public JsonPackageIdentity Package { get; set; } = new(); public bool Clean { get; set; } public JsonChanges Changes { get; set; } = new(); }
+internal sealed class PackageStatusResult { public int SchemaVersion { get; set; } = 1; public string Kind { get; set; } = "package"; public JsonPackageIdentity Package { get; set; } = new(); public bool Valid { get; set; } = true; public int FileCount { get; set; } }
+internal sealed class HistoryResult { public int SchemaVersion { get; set; } = 1; public JsonPackageIdentity Package { get; set; } = new(); public List<JsonHistoryRecord> History { get; set; } = []; }
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = false, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(Manifest))]
+[JsonSerializable(typeof(WorkspaceStatusResult))]
+[JsonSerializable(typeof(PackageStatusResult))]
+[JsonSerializable(typeof(HistoryResult))]
 internal partial class ManifestJsonContext : JsonSerializerContext { }
 
 internal static class ContentPackages
@@ -144,8 +168,45 @@ internal static class ContentPackages
         root = ResolveWorkspace(root); var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath)); var actual = await InventoryAsync(root); var diff = Diff(baseline.Files, actual);
         return diff.Added.Count + diff.Modified.Count + diff.Deleted.Count == 0 ? "Clean" : $"Added: {string.Join(", ", diff.Added)}\nModified: {string.Join(", ", diff.Modified)}\nDeleted: {string.Join(", ", diff.Deleted)}";
     }
+    public static async Task<string> StatusJsonAsync(string root, string? package)
+    {
+        if (package is not null)
+        {
+            var (manifest, files) = await ReadPackageManifestAsync(Path.GetFullPath(package), true);
+            return JsonSerializer.Serialize(new PackageStatusResult { Package = new() { Id = manifest.Package.Id, Version = manifest.Package.Version }, FileCount = files.Count }, ManifestJsonContext.Default.PackageStatusResult);
+        }
+        root = ResolveWorkspace(root);
+        var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath));
+        var diff = Diff(baseline.Files, await InventoryAsync(root));
+        var changes = ToJsonChanges(diff);
+        return JsonSerializer.Serialize(new WorkspaceStatusResult
+        {
+            Package = new() { Id = baseline.Package.Id, Version = baseline.Package.Version },
+            Clean = changes.Added.Count + changes.Modified.Count + changes.Deleted.Count == 0,
+            Changes = changes
+        }, ManifestJsonContext.Default.WorkspaceStatusResult);
+    }
     public static async Task<string> HistoryAsync(string root, string? package)
     { var manifest = package is null ? await ReadManifestFileAsync(Path.Combine(ResolveWorkspace(root), ManifestPath)) : (await ReadPackageManifestAsync(Path.GetFullPath(package), true)).Manifest; return string.Join(Environment.NewLine, manifest.History.Select(h => $"{h.Version} <- {h.PreviousVersion ?? "(initial)"} | +[{string.Join(",", h.Changes.Added)}] ~[{string.Join(",", h.Changes.Modified)}] -[{string.Join(",", h.Changes.Deleted)}]" + (h.Message is null ? "" : $" | {h.Message}"))); }
+    public static async Task<string> HistoryJsonAsync(string root, string? package)
+    {
+        var manifest = package is null
+            ? await ReadManifestFileAsync(Path.Combine(ResolveWorkspace(root), ManifestPath))
+            : (await ReadPackageManifestAsync(Path.GetFullPath(package), true)).Manifest;
+        var result = new HistoryResult
+        {
+            Package = new() { Id = manifest.Package.Id, Version = manifest.Package.Version },
+            History = manifest.History.Select(h => new JsonHistoryRecord
+            {
+                Version = h.Version,
+                PreviousVersion = h.PreviousVersion,
+                Message = h.Message,
+                Changes = ToJsonChanges(h.Changes)
+            }).ToList()
+        };
+        return JsonSerializer.Serialize(result, ManifestJsonContext.Default.HistoryResult);
+    }
+    private static JsonChanges ToJsonChanges(ChangeSet changes) => new() { Added = changes.Added.ToList(), Modified = changes.Modified.ToList(), Deleted = changes.Deleted.ToList() };
     public static async Task<string> Sha256Async(string path) { await using var stream = File.OpenRead(path); return Convert.ToHexString(await SHA256.HashDataAsync(stream)); }
     public static bool HashEquals(string actual, string expected) => Regex.IsMatch(expected, "^[0-9a-fA-F]{64}$") && CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actual), Convert.FromHexString(expected));
 

@@ -1,0 +1,310 @@
+param(
+    [string] $Configuration = 'Release'
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$project = Join-Path $repoRoot 'src/DotnetNugetContent/DotnetNugetContent.csproj'
+$consumerScript = Join-Path $PSScriptRoot 'validate-consumer.ps1'
+$runId = [guid]::NewGuid().ToString('N')
+$work = Join-Path ([System.IO.Path]::GetTempPath()) "dotnet-nuget-content M0003 $runId"
+$feed = Join-Path $work 'isolated local NuGet feed'
+$toolPath = Join-Path $work 'isolated global-equivalent tools'
+$localProject = Join-Path $work 'local manifest consumer'
+$version = '0.1.0'
+$updateVersion = '0.1.1'
+$packageId = 'dotnet-nuget-content'
+
+function Invoke-CapturedProcess([string] $FilePath, [string[]] $Arguments, [string] $WorkingDirectory = $work) {
+    if ([System.IO.Path]::GetExtension($FilePath) -in @('.cmd', '.bat')) {
+        $stdoutPath = Join-Path $work ('.stdout-' + [guid]::NewGuid().ToString('N'))
+        $stderrPath = Join-Path $work ('.stderr-' + [guid]::NewGuid().ToString('N'))
+        try {
+            Push-Location $WorkingDirectory
+            try {
+                & $FilePath @Arguments 1> $stdoutPath 2> $stderrPath
+                $code = $LASTEXITCODE
+            } finally { Pop-Location }
+            return [pscustomobject]@{
+                ExitCode = $code
+                Stdout = if (Test-Path -LiteralPath $stdoutPath) { [System.IO.File]::ReadAllText($stdoutPath) } else { '' }
+                Stderr = if (Test-Path -LiteralPath $stderrPath) { [System.IO.File]::ReadAllText($stderrPath) } else { '' }
+            }
+        } finally {
+            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdoutTask.GetAwaiter().GetResult(); Stderr = $stderrTask.GetAwaiter().GetResult() }
+}
+
+function Invoke-Checked([string] $FilePath, [string[]] $Arguments, [string] $WorkingDirectory = $work) {
+    $result = Invoke-CapturedProcess $FilePath $Arguments $WorkingDirectory
+    if ($result.Stdout) { Write-Output $result.Stdout.TrimEnd() }
+    if ($result.Stderr) { [Console]::Error.WriteLine($result.Stderr.TrimEnd()) }
+    if ($result.ExitCode -ne 0) { throw "$FilePath $($Arguments -join ' ') failed with exit code $($result.ExitCode)." }
+    return $result
+}
+
+function Invoke-Tool([string[]] $Arguments) { Invoke-CapturedProcess $toolShim $Arguments }
+function Invoke-LocalTool([string[]] $Arguments) { Invoke-CapturedProcess 'dotnet' (@('tool', 'run', 'dotnet-nuget-content', '--') + $Arguments) $localProject }
+function Assert-ToolResult($Result, [int] $ExitCode, [string] $Label) {
+    if ($Result.ExitCode -ne $ExitCode) { throw "$Label returned exit $($Result.ExitCode), expected $ExitCode. stdout=[$($Result.Stdout)] stderr=[$($Result.Stderr)]" }
+}
+function Assert-JsonLine([string] $Text, [string] $Label) {
+    if (-not $Text.EndsWith("`n") -or $Text.TrimEnd("`r", "`n").Contains("`n")) { throw "$Label did not emit exactly one JSON line." }
+    return ($Text | ConvertFrom-Json -AsHashtable)
+}
+function New-ToolPackage([string] $PackageVersion, [string] $Output) {
+    $topOutput = Join-Path $Output 'top-level'
+    $ridOutput = Join-Path $Output 'win-x64'
+    New-Item -ItemType Directory -Force -Path $topOutput, $ridOutput | Out-Null
+    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '--no-restore', "-p:Version=$PackageVersion", '-o', $topOutput) | Out-Null
+    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '-r', 'win-x64', '--no-restore', "-p:Version=$PackageVersion", '-o', $ridOutput) | Out-Null
+}
+function Assert-NativeAmd64([string] $Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        $stream.Position = 0x3c
+        $peOffset = $reader.ReadInt32()
+        $stream.Position = $peOffset + 4
+        if ($reader.ReadUInt16() -ne 0x8664) { throw "Native executable is not PE AMD64: $Path" }
+    } finally { $stream.Dispose() }
+}
+function Assert-PackageIdentity([System.IO.Compression.ZipArchive] $Archive, [string] $EntryName, [string] $ExpectedId, [string] $ExpectedVersion) {
+    $nuspecEntry = $Archive.GetEntry($EntryName)
+    if (-not $nuspecEntry) { throw "Package is missing its expected nuspec: $EntryName" }
+    $nuspecReader = [System.IO.StreamReader]::new($nuspecEntry.Open())
+    try { [xml] $nuspec = $nuspecReader.ReadToEnd() } finally { $nuspecReader.Dispose() }
+    $identity = $nuspec.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='id']").InnerText
+    $packageVersion = $nuspec.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='version']").InnerText
+    if ($identity -ne $ExpectedId -or $packageVersion -ne $ExpectedVersion) { throw "Package identity/version mismatch in $EntryName." }
+}
+
+try {
+    New-Item -ItemType Directory -Force -Path $work, $feed, $toolPath, $localProject | Out-Null
+    $config = Join-Path $work 'NuGet.Config'
+    $feedPath = [System.Security.SecurityElement]::Escape($feed)
+    Set-Content -LiteralPath $config -Encoding utf8 -Value "<configuration><packageSources><clear/><add key=`"isolated`" value=`"$feedPath`" /></packageSources></configuration>"
+
+    $topBuild = Join-Path $work 'top-level pack'
+    $ridBuild = Join-Path $work 'win-x64 pack'
+    New-Item -ItemType Directory -Force -Path $topBuild, $ridBuild | Out-Null
+    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '--no-restore', "-p:Version=$version", '-o', $topBuild) | Out-Null
+    Invoke-Checked 'dotnet' @('pack', $project, '-c', $Configuration, '-r', 'win-x64', '--no-restore', "-p:Version=$version", '-o', $ridBuild) | Out-Null
+    $topCandidate = Join-Path $topBuild "$packageId.$version.nupkg"
+    $ridCandidate = Join-Path $ridBuild "$packageId.win-x64.$version.nupkg"
+    foreach ($candidate in @($topCandidate, $ridCandidate)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Expected tool package was not produced: $candidate" }
+        Copy-Item -LiteralPath $candidate -Destination $feed
+    }
+    if ((@(Get-ChildItem -LiteralPath $feed -Filter '*.nupkg')).Count -ne 2) { throw 'The local feed must contain only the matching top-level pointer and win-x64 tool package.' }
+    $topPackage = Join-Path $feed "$packageId.$version.nupkg"
+    $ridPackage = Join-Path $feed "$packageId.win-x64.$version.nupkg"
+    $topArchive = [System.IO.Compression.ZipFile]::OpenRead($topPackage)
+    $ridArchive = [System.IO.Compression.ZipFile]::OpenRead($ridPackage)
+    try {
+        Assert-PackageIdentity $topArchive "$packageId.nuspec" $packageId $version
+        Assert-PackageIdentity $ridArchive "$packageId.win-x64.nuspec" "$packageId.win-x64" $version
+        $topSpec = $topArchive.GetEntry('tools/any/any/DotnetToolSettings.xml')
+        if (-not $topSpec) { throw 'Top-level tool pointer package is missing DotnetToolSettings.xml.' }
+        $topReader = [System.IO.StreamReader]::new($topSpec.Open())
+        try { $toolSettings = $topReader.ReadToEnd() } finally { $topReader.Dispose() }
+        if ($toolSettings -notmatch 'dotnet-nuget-content') { throw 'Tool pointer does not declare the requested command name.' }
+        if ($ridArchive.Entries.FullName -notcontains 'tools/any/win-x64/dotnet-nuget-content.exe') { throw 'win-x64 tool package is missing its native executable.' }
+        if ($ridArchive.Entries.FullName -match 'tools/any/(?!win-x64)[^/]+/dotnet-nuget-content\.exe') { throw 'The tool package includes an unsupported RID fallback.' }
+    } finally { $topArchive.Dispose(); $ridArchive.Dispose() }
+
+    $install = Invoke-Checked 'dotnet' @('tool', 'install', $packageId, '--tool-path', $toolPath, '--version', $version, '--configfile', $config)
+    $script:toolShim = Join-Path $toolPath 'dotnet-nuget-content.cmd'
+    if (-not (Test-Path -LiteralPath $toolShim -PathType Leaf)) { throw 'Isolated global-equivalent install did not create its command shim.' }
+    $versionResult = Invoke-Tool @('--version')
+    Assert-ToolResult $versionResult 0 'Installed global-equivalent --version'
+    if ($versionResult.Stdout -ne "$version`r`n" -or $versionResult.Stderr) { throw 'Installed tool version output does not match the package version.' }
+    $shimLine = (Get-Content -LiteralPath $toolShim | Select-Object -First 2 | Select-Object -Last 1)
+    $nativeExe = [regex]::Match($shimLine, '"%~dp0([^" ]+\.exe)"').Groups[1].Value
+    if (-not $nativeExe) { throw 'Could not resolve the installed native executable through its shim.' }
+    $installedExe = Join-Path $toolPath $nativeExe
+    Assert-NativeAmd64 $installedExe
+    $nativeHash = (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash
+
+    $localManifest = Join-Path $localProject '.config/dotnet-tools.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $localManifest) | Out-Null
+    Invoke-Checked 'dotnet' @('new', 'tool-manifest', '--output', (Split-Path -Parent $localManifest)) $localProject | Out-Null
+    Invoke-Checked 'dotnet' @('tool', 'install', $packageId, '--local', '--tool-manifest', $localManifest, '--version', $version, '--configfile', $config) $localProject | Out-Null
+    $localVersion = Invoke-LocalTool @('--version')
+    Assert-ToolResult $localVersion 0 'Local manifest invocation'
+    if ($localVersion.Stdout -ne "$version`r`n" -or $localVersion.Stderr) { throw 'Local manifest invocation reported an unexpected version or diagnostic.' }
+
+    $source = Join-Path $work 'independent source'
+    $workspace = Join-Path $work 'managed workspace'
+    $initialPackage = Join-Path $work 'initial snapshot.nupkg'
+    New-Item -ItemType Directory -Force -Path (Join-Path $source 'nested/deeper') | Out-Null
+    $expectedText = [System.Text.Encoding]::UTF8.GetBytes("original snowman ☃`r`n")
+    $expectedBinary = [byte[]](0, 255, 1, 128, 13, 10, 0, 42)
+    [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/deeper/readme.txt'), $expectedText)
+    [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $expectedBinary)
+    $created = Invoke-Tool @('pack', '--id', 'sample.installed', '--version', '1.0.0', '--source', $source, '--output', $initialPackage)
+    Assert-ToolResult $created 0 'Installed tool initial pack'
+    $unpacked = Invoke-Tool @('unpack', '--package', $initialPackage, '--destination', $workspace)
+    Assert-ToolResult $unpacked 0 'Installed tool unpack'
+    foreach ($relative in @('nested/deeper/readme.txt', 'nested/payload.bin')) {
+        $expected = [System.IO.File]::ReadAllBytes((Join-Path $source $relative))
+        $actual = [System.IO.File]::ReadAllBytes((Join-Path $workspace $relative))
+        if ([Convert]::ToHexString($actual) -cne [Convert]::ToHexString($expected)) { throw "Installed tool unpack changed bytes: $relative" }
+    }
+    $clean = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $clean 0 'Clean workspace JSON'
+    if ($clean.Stderr) { throw 'Clean workspace JSON emitted stderr.' }
+    $cleanJson = Assert-JsonLine $clean.Stdout 'Clean workspace status'
+    if ($cleanJson.schemaVersion -ne 1 -or $cleanJson.kind -ne 'workspace' -or -not $cleanJson.clean -or $cleanJson.changes.added.Count -ne 0 -or $cleanJson.changes.modified.Count -ne 0 -or $cleanJson.changes.deleted.Count -ne 0) { throw 'Clean workspace JSON does not match the public contract.' }
+
+    [System.IO.File]::WriteAllText((Join-Path $workspace 'nested/deeper/readme.txt'), 'changed')
+    Remove-Item -LiteralPath (Join-Path $workspace 'nested/payload.bin')
+    [System.IO.File]::WriteAllText((Join-Path $workspace 'added.json'), '{"added":true}')
+    $dirty = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $dirty 0 'Dirty workspace JSON'
+    $dirtyJson = Assert-JsonLine $dirty.Stdout 'Dirty workspace status'
+    if ($dirtyJson.clean -or $dirtyJson.changes.added[0] -ne 'added.json' -or $dirtyJson.changes.modified[0] -ne 'nested/deeper/readme.txt' -or $dirtyJson.changes.deleted[0] -ne 'nested/payload.bin') { throw 'Dirty workspace JSON does not classify paths correctly.' }
+    $textMode = Invoke-Tool @('status', '--source', $workspace)
+    Assert-ToolResult $textMode 0 'Text status retention'
+    if ($textMode.Stdout -notmatch 'Added: added.json' -or $textMode.Stderr) { throw 'Text status mode no longer reports changes on stdout.' }
+    $conflictingSelectors = Invoke-Tool @('status', '--source', $workspace, '--package', $initialPackage, '--json')
+    Assert-ToolResult $conflictingSelectors 2 'Conflicting status selectors'
+    if ($conflictingSelectors.Stdout -or $conflictingSelectors.Stderr -notmatch 'cannot be used together') { throw 'Conflicting selectors did not fail cleanly as a usage error.' }
+
+    $managedPackage = Join-Path $work 'managed snapshot.nupkg'
+    $markerPath = Join-Path $workspace '.nuget-content/manifest.json'
+    $markerBefore = [System.IO.File]::ReadAllBytes($markerPath)
+    $repack = Invoke-Tool @('pack', '--source', $workspace, '--version', '1.1.0', '--message', 'installed update', '--output', $managedPackage)
+    Assert-ToolResult $repack 0 'Installed tool managed repack'
+    if ([Convert]::ToHexString($markerBefore) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($markerPath))) { throw 'Managed repack changed its baseline marker.' }
+    $workspaceHistory = Invoke-Tool @('history', '--source', $workspace, '--json')
+    Assert-ToolResult $workspaceHistory 0 'Workspace history JSON'
+    $workspaceHistoryJson = Assert-JsonLine $workspaceHistory.Stdout 'Workspace history'
+    if ($workspaceHistoryJson.package.version -ne '1.0.0' -or $workspaceHistoryJson.history.Count -ne 1 -or $workspaceHistoryJson.history[0].ContainsKey('message')) { throw 'Workspace history JSON does not preserve the baseline chronology or omitted message.' }
+    $packageHistory = Invoke-Tool @('history', '--package', $managedPackage, '--json')
+    Assert-ToolResult $packageHistory 0 'Package history JSON'
+    $packageHistoryJson = Assert-JsonLine $packageHistory.Stdout 'Package history'
+    if ($packageHistoryJson.package.version -ne '1.1.0' -or $packageHistoryJson.history.Count -ne 2 -or $packageHistoryJson.history[1].message -ne 'installed update') { throw 'Package history JSON does not include chronological versions and its supplied message.' }
+    $packageStatus = Invoke-Tool @('status', '--package', $managedPackage, '--json')
+    Assert-ToolResult $packageStatus 0 'Valid package JSON status'
+    $packageStatusJson = Assert-JsonLine $packageStatus.Stdout 'Package status'
+    if ($packageStatusJson.kind -ne 'package' -or -not $packageStatusJson.valid -or $packageStatusJson.fileCount -ne 2) { throw 'Package JSON status does not match the public contract.' }
+    $badPackagePath = Join-Path $work 'malformed package.nupkg'
+    [System.IO.File]::WriteAllText($badPackagePath, 'not a package')
+    $badStatus = Invoke-Tool @('status', '--package', $badPackagePath, '--json')
+    Assert-ToolResult $badStatus 1 'Invalid package JSON status'
+    if ($badStatus.Stdout -or -not $badStatus.Stderr.StartsWith('error:')) { throw 'Invalid package JSON status emitted JSON or failed to use stderr.' }
+
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $toolShim, '-PackagePath', $managedPackage, '-ExpectedSource', $workspace) $work
+    if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
+    if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
+    Assert-ToolResult $consumer 0 'Independent PackageReference consumer'
+
+    $heavySource = Join-Path $work 'many Unicode files'; $heavyWorkspace = Join-Path $work 'many Unicode unpacked'; $heavyPackage = Join-Path $work 'many Unicode.nupkg'
+    $deep = $heavySource
+    New-Item -ItemType Directory -Force -Path $deep | Out-Null
+    foreach ($part in @('über', '深い', 'nested-segment-1234567890', 'nested-segment-abcdefghij', 'more-segment-123456', 'final-segment-abcdef')) { $deep = Join-Path $deep $part; New-Item -ItemType Directory -Force -Path $deep | Out-Null }
+    $unicodePath = Join-Path $deep 'данные-☃.bin'
+    $unicodeRelative = [System.IO.Path]::GetRelativePath($heavySource, $unicodePath).Replace('\', '/')
+    if ($unicodePath.Length -lt 190 -or $unicodePath.Length -ge 260) { throw "Nested Unicode path length $($unicodePath.Length) did not exercise a deep supported Windows path." }
+    [System.IO.File]::WriteAllBytes($unicodePath, $expectedBinary)
+    for ($i = 0; $i -lt 300; $i++) { [System.IO.File]::WriteAllText((Join-Path $heavySource ("file-{0:D4}.txt" -f $i)), "value $i") }
+    $heavyPack = Invoke-Tool @('pack', '--id', 'sample.many', '--version', '1.0.0', '--source', $heavySource, '--output', $heavyPackage)
+    Assert-ToolResult $heavyPack 0 'Many-file Unicode pack'
+    $heavyUnpack = Invoke-Tool @('unpack', '--package', $heavyPackage, '--destination', $heavyWorkspace)
+    Assert-ToolResult $heavyUnpack 0 'Many-file Unicode unpack'
+    if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $heavyWorkspace $unicodeRelative))) -cne [Convert]::ToHexString($expectedBinary)) { throw 'Unicode nested path or its bytes changed.' }
+    $heavyStatus = Invoke-Tool @('status', '--package', $heavyPackage, '--json')
+    Assert-ToolResult $heavyStatus 0 'Many-file package validation'
+    if ((Assert-JsonLine $heavyStatus.Stdout 'Many-file package status').fileCount -ne 301) { throw 'Many-file package inventory count was incorrect.' }
+
+    $largeSource = Join-Path $work 'large source'; $largePackage = Join-Path $work 'large payload.nupkg'; $largeWorkspace = Join-Path $work 'large workspace'
+    New-Item -ItemType Directory -Force -Path $largeSource | Out-Null
+    $largePath = Join-Path $largeSource 'large.bin'
+    $buffer = [byte[]]::new(1MB)
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $largeStream = [System.IO.File]::OpenWrite($largePath)
+    try { for ($i = 0; $i -lt 64; $i++) { $random.GetBytes($buffer); $largeStream.Write($buffer) } } finally { $largeStream.Dispose(); $random.Dispose() }
+    $largePack = Invoke-Tool @('pack', '--id', 'sample.large', '--version', '1.0.0', '--source', $largeSource, '--output', $largePackage)
+    Assert-ToolResult $largePack 0 '64 MiB installed tool pack'
+    $largeStatus = Invoke-Tool @('status', '--package', $largePackage, '--json')
+    Assert-ToolResult $largeStatus 0 '64 MiB package streaming validation'
+    $largeUnpack = Invoke-Tool @('unpack', '--package', $largePackage, '--destination', $largeWorkspace)
+    Assert-ToolResult $largeUnpack 0 '64 MiB installed tool unpack'
+    if ((Get-FileHash -LiteralPath $largePath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $largeWorkspace 'large.bin') -Algorithm SHA256).Hash) { throw 'Large payload bytes changed in installed tool lifecycle.' }
+
+    $interruptedPath = Join-Path $work 'interrupted managed package.nupkg'
+    $markerBeforeInterrupt = [System.IO.File]::ReadAllBytes($markerPath)
+    Copy-Item -LiteralPath $largePath -Destination (Join-Path $workspace 'interrupt-large.bin')
+    $interruptInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $interruptInfo.FileName = $installedExe
+    $interruptInfo.UseShellExecute = $false
+    $interruptInfo.WorkingDirectory = $work
+    foreach ($argument in @('pack', '--source', $workspace, '--version', '1.2.0', '--output', $interruptedPath)) { [void]$interruptInfo.ArgumentList.Add($argument) }
+    $interruptedProcess = [System.Diagnostics.Process]::Start($interruptInfo)
+    if ($interruptedProcess.WaitForExit(20)) { throw 'The large managed pack completed before the interruption check could terminate it.' }
+    $interruptedProcess.Kill($true)
+    $interruptedProcess.WaitForExit()
+    if (Test-Path -LiteralPath $interruptedPath) { throw 'Interrupted managed pack committed a package.' }
+    if (@(Get-ChildItem -LiteralPath $work -File -Filter 'interrupted managed package.nupkg.*.tmp').Count -ne 0) { throw 'Interrupted managed pack left a partial package staging file.' }
+    if ([Convert]::ToHexString($markerBeforeInterrupt) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($markerPath))) { throw 'Interrupted managed pack changed its baseline marker.' }
+
+    $conflictOutput = Join-Path $work 'preserved output.nupkg'
+    [System.IO.File]::WriteAllText($conflictOutput, 'keep')
+    $conflictPack = Invoke-Tool @('pack', '--id', 'sample.conflict', '--version', '1.0.0', '--source', $source, '--output', $conflictOutput)
+    Assert-ToolResult $conflictPack 1 'Existing package output conflict'
+    if ([System.IO.File]::ReadAllText($conflictOutput) -ne 'keep') { throw 'Existing package output was modified.' }
+    $insideOutput = Join-Path $workspace 'self.nupkg'
+    $insidePack = Invoke-Tool @('pack', '--source', $workspace, '--version', '1.2.0', '--output', $insideOutput)
+    Assert-ToolResult $insidePack 1 'Managed workspace output conflict'
+    if (Test-Path -LiteralPath $insideOutput) { throw 'Rejected managed output left a file in the workspace.' }
+    $failedDestination = Join-Path $work 'failed extraction'
+    $badUnpack = Invoke-Tool @('unpack', '--package', $badPackagePath, '--destination', $failedDestination)
+    Assert-ToolResult $badUnpack 1 'Malformed package extraction cleanup'
+    if (Test-Path -LiteralPath $failedDestination) { throw 'Malformed package left a partial extraction destination.' }
+
+    $updateTop = Join-Path $work 'update pack'
+    New-ToolPackage $updateVersion $updateTop
+    Copy-Item -LiteralPath (Join-Path $updateTop "top-level/$packageId.$updateVersion.nupkg") -Destination $feed
+    Copy-Item -LiteralPath (Join-Path $updateTop "win-x64/$packageId.win-x64.$updateVersion.nupkg") -Destination $feed
+    Invoke-Checked 'dotnet' @('tool', 'update', $packageId, '--tool-path', $toolPath, '--version', $updateVersion, '--configfile', $config) | Out-Null
+    $updated = Invoke-Tool @('--version')
+    Assert-ToolResult $updated 0 'Updated global-equivalent tool'
+    if ($updated.Stdout -ne "$updateVersion`r`n") { throw 'Global-equivalent update did not select the requested version.' }
+    Invoke-Checked 'dotnet' @('tool', 'update', $packageId, '--local', '--tool-manifest', $localManifest, '--version', $updateVersion, '--configfile', $config) $localProject | Out-Null
+    $localUpdated = Invoke-LocalTool @('--version')
+    Assert-ToolResult $localUpdated 0 'Updated local manifest tool'
+    if ($localUpdated.Stdout -ne "$updateVersion`r`n") { throw 'Local manifest update did not select the requested version.' }
+    Invoke-Checked 'dotnet' @('tool', 'uninstall', $packageId, '--tool-path', $toolPath) | Out-Null
+    if (Test-Path -LiteralPath $toolShim) { throw 'Global-equivalent uninstall left the tool shim.' }
+    Invoke-Checked 'dotnet' @('tool', 'uninstall', $packageId, '--local', '--tool-manifest', $localManifest) $localProject | Out-Null
+    $localList = Invoke-Checked 'dotnet' @('tool', 'list', '--local') $localProject
+    if ($localList.Stdout -match [regex]::Escape($packageId)) { throw 'Local tool uninstall left the package in its manifest.' }
+
+    Write-Output "M0003 installed tool validation passed."
+    Write-Output "Local feed: $feed"
+    Write-Output "Global-equivalent/local installs, updates and uninstalls: $version -> $updateVersion"
+    Write-Output "Installed Native AOT PE: $installedExe"
+    Write-Output "Installed executable SHA-256: $nativeHash"
+    Write-Output "Top-level package SHA-256: $((Get-FileHash -LiteralPath $topPackage -Algorithm SHA256).Hash)"
+    Write-Output "win-x64 package SHA-256: $((Get-FileHash -LiteralPath $ridPackage -Algorithm SHA256).Hash)"
+    Write-Output "Longest tested Unicode path length: $($unicodePath.Length) characters"
+    Write-Output 'Installed lifecycle, JSON/text streams, independent consumer byte oracle, 301 files, nested Unicode path, 64 MiB payload, interruption, and conflict cleanup passed.'
+}
+finally {
+    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+}
