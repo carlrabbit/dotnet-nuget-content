@@ -12,6 +12,7 @@ Manage arbitrary, long-lived content—especially test data and external binary 
 - **All packages created by this product include the public v1 manifest at package ZIP-root `.nuget-content/manifest.json`, outside `contentFiles`.** Its format and invariants are defined by `docs/specs/manifest-v1.md` and `.schema.json`. The manifest is an interchange contract, not just internal metadata.
 - Creation from an arbitrary untracked source directory needs no user-authored manifest; the CLI generates it. No released/legacy format exists: input packages without a valid supported manifest are not managed M0002 package inputs.
 - The CLI remains noninteractive, executable without a managed runtime using Native AOT, and uses NuGet.Packaging in process. Explicit input paths resolve relative to invocation CWD.
+- M0003 distributes and installs the CLI only as a NuGet .NET tool on Windows x64 through global or local tool manifests. Its top-level pointer selects the matching `win-x64` Native AOT package; standalone executable/archive downloads and other RID fallbacks are unsupported. `status` and `history` provide the optional JSON interchange defined in `docs/specs/M0003-cli-json.md`.
 
 ## Managed workspace
 

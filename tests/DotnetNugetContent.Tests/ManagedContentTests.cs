@@ -161,5 +161,98 @@ public sealed class ManagedContentTests : IDisposable
         Assert.Equal(await ContentPackages.Sha256Async(payload), await ContentPackages.Sha256Async(Path.Combine(destination, "large.bin")));
     }
 
+    [Fact]
+    public async Task StatusAndHistoryJsonHaveStableShapesForWorkspaceAndPackage()
+    {
+        var source = Path.Combine(root, "json-source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(source, "nested.txt"), "before");
+        var package = Path.Combine(root, "json.nupkg");
+        await ContentPackages.PackInitialAsync("sample.json", "1.0.0", source, package);
+        var workspace = Path.Combine(root, "json-workspace");
+        await ContentPackages.UnpackAsync(package, workspace, null);
+
+        var clean = JsonDocument.Parse(await ContentPackages.StatusJsonAsync(workspace, null));
+        Assert.Equal(1, clean.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("workspace", clean.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("sample.json", clean.RootElement.GetProperty("package").GetProperty("id").GetString());
+        Assert.True(clean.RootElement.GetProperty("clean").GetBoolean());
+        Assert.Empty(clean.RootElement.GetProperty("changes").GetProperty("added").EnumerateArray());
+
+        await File.WriteAllTextAsync(Path.Combine(workspace, "nested.txt"), "after");
+        await File.WriteAllTextAsync(Path.Combine(workspace, "added.txt"), "added");
+        var dirty = JsonDocument.Parse(await ContentPackages.StatusJsonAsync(workspace, null));
+        Assert.False(dirty.RootElement.GetProperty("clean").GetBoolean());
+        Assert.Equal("added.txt", dirty.RootElement.GetProperty("changes").GetProperty("added")[0].GetString());
+        Assert.Equal("nested.txt", dirty.RootElement.GetProperty("changes").GetProperty("modified")[0].GetString());
+
+        var packageStatus = JsonDocument.Parse(await ContentPackages.StatusJsonAsync("unused", package));
+        Assert.Equal("package", packageStatus.RootElement.GetProperty("kind").GetString());
+        Assert.True(packageStatus.RootElement.GetProperty("valid").GetBoolean());
+        Assert.Equal(1, packageStatus.RootElement.GetProperty("fileCount").GetInt32());
+
+        var history = JsonDocument.Parse(await ContentPackages.HistoryJsonAsync(workspace, null));
+        Assert.Equal("1.0.0", history.RootElement.GetProperty("package").GetProperty("version").GetString());
+        Assert.Equal(JsonValueKind.Null, history.RootElement.GetProperty("history")[0].GetProperty("previousVersion").ValueKind);
+        Assert.False(history.RootElement.GetProperty("history")[0].TryGetProperty("message", out _));
+        var packageHistory = JsonDocument.Parse(await ContentPackages.HistoryJsonAsync("unused", package));
+        Assert.Single(packageHistory.RootElement.GetProperty("history").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task JsonCliSwitchRetainsTextModeAndRejectsConflictingSelectors()
+    {
+        var source = Path.Combine(root, "cli-source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(source, "data"), "x");
+        var package = Path.Combine(root, "cli.nupkg");
+        await ContentPackages.PackInitialAsync("sample.cli", "1.0.0", source, package);
+        var workspace = Path.Combine(root, "cli-workspace");
+        await ContentPackages.UnpackAsync(package, workspace, null);
+
+        var json = await RunCli(workspace, "status", "--json");
+        Assert.Equal(0, json.ExitCode);
+        Assert.Empty(json.Stderr);
+        using (var parsed = JsonDocument.Parse(json.Stdout)) Assert.True(parsed.RootElement.GetProperty("clean").GetBoolean());
+
+        var text = await RunCli(workspace, "status");
+        Assert.Equal("Clean" + Environment.NewLine, text.Stdout);
+        Assert.Empty(text.Stderr);
+
+        var conflict = await RunCli(workspace, "status", "--source", workspace, "--package", package, "--json");
+        Assert.Equal(2, conflict.ExitCode);
+        Assert.Empty(conflict.Stdout);
+        Assert.Contains("cannot be used together", conflict.Stderr);
+
+        var invalidPackage = Path.Combine(root, "missing.nupkg");
+        var error = await RunCli(workspace, "history", "--package", invalidPackage, "--json");
+        Assert.Equal(1, error.ExitCode);
+        Assert.Empty(error.Stdout);
+        Assert.StartsWith("error: Package not found:", error.Stderr);
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCli(string workingDirectory, params string[] args)
+    {
+        var oldOut = Console.Out;
+        var oldError = Console.Error;
+        var oldDirectory = Environment.CurrentDirectory;
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        try
+        {
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
+            Environment.CurrentDirectory = workingDirectory;
+            var exitCode = await Cli.RunAsync(args);
+            return (exitCode, stdout.ToString(), stderr.ToString());
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+            Console.SetError(oldError);
+            Environment.CurrentDirectory = oldDirectory;
+        }
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

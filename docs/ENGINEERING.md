@@ -4,6 +4,8 @@
 
 - Target `net11.0`, .NET 11 RC SDK `11.0.100-rc.1`, native AOT standalone command on Windows x64 as initial Tier 4 target. Continue using `NuGet.Packaging` as the in-process reader/writer; the M0001 fallback policy remains only for demonstrated material Native AOT incompatibility.
 - Noninteractive CLI; usage errors exit 2, operation/integrity failures exit 1, success exits 0. Diagnostics to stderr; successful outputs to stdout. Do not overwrite existing output and stage writes before committing. Paths relative to invocation CWD; no upward workspace discovery.
+- M0003 distribution is exclusively a NuGet .NET tool for Windows x64, packaged as a top-level tool pointer plus matching `win-x64` Native AOT package. Do not add standalone downloads, `any`/other-RID fallbacks, managed fallback or remote-feed operations. Global and local manifest installs are supported; publication is deferred to M0004.
+- M0003 `status --json` and `history --json` are optional valueless switches. Emit one compact JSON object plus newline on stdout, use camelCase keys and slash-separated ordinal paths, and retain text output by default. Reject simultaneous `--source` and `--package`; JSON failures produce no stdout and preserve usage/operation exit codes. The public schemas are in `docs/specs/M0003-cli-json.md`.
 - The supported package trust boundary is trusted inputs. Preserve traversal, symlink escape where relevant, duplicate/conflict, no-clobber, malformed input and cleanup defenses; no ZIP-bomb/resource quota framework.
 
 ## Public metadata and workspace specialization
