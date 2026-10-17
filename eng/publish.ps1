@@ -86,6 +86,23 @@ function Invoke-PublishSequence($Candidate, [scriptblock] $Push) {
     return $completed.ToArray()
 }
 
+function Save-PublicationFailureStatus($Candidate, [string[]] $Completed, [string] $ErrorText, [string] $Path) {
+    $completedPackages = @($Completed)
+    $status = [ordered]@{
+        target = $expectedSource
+        sourceCommit = $Candidate.Manifest.sourceCommit
+        published = $completedPackages
+        failedPackage = if ($completedPackages.Count -eq 0) { $ridId } else { $topId }
+        error = $ErrorText
+        recovery = if ($completedPackages.Count -eq 1) {
+            "RID package $ridId was accepted. Verify it on NuGet.org, then publish the unchanged top-level package $topId from candidate.json."
+        } else {
+            'No package is recorded as published. Resolve the failure before retrying the verified candidate.'
+        }
+    }
+    $status | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding utf8
+}
+
 function Invoke-DotnetPush([string] $Path, [string] $Id, [string] $Hash) {
     # The API key is read only for this authorized invocation. dotnet nuget push
     # accepts it only as an argument; it is never echoed or written to disk.
@@ -135,6 +152,12 @@ function Invoke-MockPublicationChecks {
             if ($_.Exception.Message -ne 'mock first push failure') { throw }
         }
         if (($failedTrace -join ',') -ne $ridId) { throw 'A failed RID push did not stop before the top-level pointer.' }
+        $mockStatusPath = Join-Path $testRoot 'mock-publication-status.json'
+        Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock first push failure' $mockStatusPath
+        $mockStatus = Get-Content -LiteralPath $mockStatusPath -Raw | ConvertFrom-Json
+        if ($mockStatus.failedPackage -ne $ridId -or @($mockStatus.published).Count -ne 0 -or $mockStatus.recovery -notmatch 'No package is recorded as published') {
+            throw 'A failed first push did not record honest partial publication state and recovery guidance.'
+        }
 
         foreach ($case in @(
             @{ Target = 'https://example.invalid/v3/index.json'; Phrase = $approvalPhrase },
@@ -164,8 +187,7 @@ if ($Publish) {
     } catch {
         $completedPackages = @($script:publishCompleted)
         $statusPath = Join-Path (Split-Path -Parent $candidate.Root) ('publication-status-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '.json')
-        $status = [ordered]@{ target = $expectedSource; sourceCommit = $candidate.Manifest.sourceCommit; published = $completedPackages; failedPackage = if ($completedPackages.Count -eq 0) { $ridId } else { $topId }; error = $_.Exception.Message; recovery = if ($completedPackages.Count -eq 1) { "RID package $ridId was accepted. Verify it on NuGet.org, then publish the unchanged top-level package $topId from candidate.json." } else { 'No package is recorded as published. Resolve the failure before retrying the verified candidate.' } }
-        $status | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statusPath -Encoding utf8
+        Save-PublicationFailureStatus $candidate $completedPackages $_.Exception.Message $statusPath
         throw "Publication stopped. Partial state is recorded at $statusPath. $($_.Exception.Message)"
     }
     exit 0
