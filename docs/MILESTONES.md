@@ -2,7 +2,8 @@
 
 | ID | Title | State | Purpose |
 |---|---|---|---|
-| M0001 | Initialization and native content package vertical slice | done | Proved initial standalone Native AOT NuGet package/consumer path; historical evidence remains in its milestone. |
-| M0002 | Managed content snapshots and public manifest | done | Introduce package manifest v1, workspace status, versioned repack, and linear change history. |
+| M0001 | Initialization and native content package vertical slice | done | Native AOT + NuGet consumer initial proof. |
+| M0002 | Managed content snapshots and public manifest | done | Public manifest, workspace status, repack and history. |
+| M0003 | Windows NuGet tool and product hardening | done | Native AOT tool install, JSON output, Windows reliability and consumer boundary. |
 
-M0002 is complete. M0001 is historical and was not rewritten to introduce M0002 semantics.
+M0004 (not yet planned) owns final help text review, user-facing presentation polish, publishing automation, and the 1.0 release.
