@@ -1,5 +1,7 @@
 param(
-    [string] $NativeExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/win-x64/dotnet-nuget-content.exe')
+    [string] $NativeExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/win-x64/dotnet-nuget-content.exe'),
+    [string] $PackagePath,
+    [string] $ExpectedSource
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,16 +44,61 @@ function Invoke-NativeCli([string[]] $Arguments) {
     }
 }
 
+function Compare-FileBytes([string] $Left, [string] $Right) {
+    $leftStream = [System.IO.File]::OpenRead($Left)
+    $rightStream = [System.IO.File]::OpenRead($Right)
+    try {
+        if ($leftStream.Length -ne $rightStream.Length) { return $false }
+        $leftBuffer = [byte[]]::new(65536)
+        $rightBuffer = [byte[]]::new(65536)
+        while ($true) {
+            $leftCount = $leftStream.Read($leftBuffer, 0, $leftBuffer.Length)
+            $rightCount = $rightStream.Read($rightBuffer, 0, $rightBuffer.Length)
+            if ($leftCount -ne $rightCount) { return $false }
+            if ($leftCount -eq 0) { return $true }
+            for ($index = 0; $index -lt $leftCount; $index++) {
+                if ($leftBuffer[$index] -ne $rightBuffer[$index]) { return $false }
+            }
+        }
+    } finally { $leftStream.Dispose(); $rightStream.Dispose() }
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $feed, (Join-Path $source 'nested/deeper'), $consumer | Out-Null
-    $textBytes = [System.Text.Encoding]::UTF8.GetBytes("consumer text ☃`r`n")
-    $binaryBytes = [byte[]](0, 255, 1, 128, 13, 10, 0, 42)
-    [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/deeper/data.txt'), $textBytes)
-    [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $binaryBytes)
-
-    $packResult = Invoke-NativeCli @('pack', '--id', $packageId, '--version', $version, '--source', $source, '--output', $package)
-    if ($packResult.ExitCode -ne 0 -or $packResult.Stderr -ne '' -or $packResult.Stdout.Trim() -ne "Created $package") {
-        throw "Native pack failed in consumer validation (exit $($packResult.ExitCode)). stdout: $($packResult.Stdout) stderr: $($packResult.Stderr)"
+    if (-not $PackagePath) {
+        $textBytes = [System.Text.Encoding]::UTF8.GetBytes("consumer text ☃`r`n")
+        $binaryBytes = [byte[]](0, 255, 1, 128, 13, 10, 0, 42)
+        [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/deeper/data.txt'), $textBytes)
+        [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $binaryBytes)
+        $ExpectedSource = $source
+        $packResult = Invoke-NativeCli @('pack', '--id', $packageId, '--version', $version, '--source', $source, '--output', $package)
+        if ($packResult.ExitCode -ne 0 -or $packResult.Stderr -ne '') { throw "Native pack failed in consumer validation: $($packResult.Stderr)" }
+    } else {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $PackagePath).Path)
+        try {
+            $entry = $archive.GetEntry('.nuget-content/manifest.json')
+            if (-not $entry) { throw 'Managed package is missing its public manifest.' }
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            $packageId = $manifest.package.id
+            $version = $manifest.package.version
+            $package = Join-Path $feed "$packageId.$version.nupkg"
+            Copy-Item -LiteralPath $PackagePath -Destination $package
+            if (-not $ExpectedSource -or -not (Test-Path -LiteralPath $ExpectedSource -PathType Container)) { throw 'An independent ExpectedSource workspace directory is required with PackagePath.' }
+            $ExpectedSource = (Resolve-Path -LiteralPath $ExpectedSource).Path
+            foreach ($file in $manifest.files) {
+                $expectedPath = Join-Path $ExpectedSource $file.path.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                if (-not (Test-Path -LiteralPath $expectedPath -PathType Leaf)) { throw "Independent workspace file missing: $($file.path)" }
+                $item = Get-Item -LiteralPath $expectedPath
+                if ($item.Length -ne $file.size -or (Get-FileHash -LiteralPath $expectedPath -Algorithm SHA256).Hash -ne $file.sha256) { throw "Workspace source differs from manifest: $($file.path)" }
+            }
+            $workspaceFiles = @(Get-ChildItem -LiteralPath $ExpectedSource -File -Recurse | ForEach-Object { [System.IO.Path]::GetRelativePath($ExpectedSource, $_.FullName).Replace('\', '/') } | Where-Object { $_ -ne '.nuget-content/manifest.json' } | Sort-Object -CaseSensitive)
+            $manifestFiles = @($manifest.files | ForEach-Object { $_.path } | Sort-Object -CaseSensitive)
+            if (($workspaceFiles -join "`n") -cne ($manifestFiles -join "`n")) { throw 'Workspace source file paths differ from package manifest inventory.' }
+        } finally { $archive.Dispose() }
+    }
+    if (-not $manifestFiles) {
+        $manifestFiles = @(Get-ChildItem -LiteralPath $ExpectedSource -File -Recurse | ForEach-Object { [System.IO.Path]::GetRelativePath($ExpectedSource, $_.FullName).Replace('\', '/') } | Sort-Object -CaseSensitive)
     }
 
     @"
@@ -72,15 +119,17 @@ try {
     Invoke-Dotnet @('build', (Join-Path $consumer 'Consumer.csproj'), '--configuration', 'Release', '--no-restore')
 
     $output = Join-Path $consumer 'bin/Release/net11.0'
-    $actualText = [System.IO.File]::ReadAllBytes((Join-Path $output 'nested/deeper/data.txt'))
-    $actualBinary = [System.IO.File]::ReadAllBytes((Join-Path $output 'nested/payload.bin'))
-    if ([Convert]::ToHexString($actualText) -ne [Convert]::ToHexString($textBytes)) { throw 'Consumer text content differs from the packaged source.' }
-    if ([Convert]::ToHexString($actualBinary) -ne [Convert]::ToHexString($binaryBytes)) { throw 'Consumer binary content differs from the packaged source.' }
+    foreach ($relative in $manifestFiles) {
+        $actual = Join-Path $output $relative
+        $expectedPath = Join-Path $ExpectedSource $relative
+        if (-not (Test-Path -LiteralPath $actual) -or -not (Compare-FileBytes $expectedPath $actual)) { throw "Consumer payload differs from independent workspace source: $relative" }
+    }
+    if (Test-Path -LiteralPath (Join-Path $output '.nuget-content')) { throw 'Manifest metadata leaked into consumer output.' }
 
     Write-Output "Consumer validation passed using native executable: $nativePath"
     Write-Output "Consumer package: $package"
-    Write-Output "Text SHA-256: $([Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($actualText)))"
-    Write-Output "Binary SHA-256: $([Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($actualBinary)))"
+    Write-Output "Consumed manifest package: $packageId $version"
+    Write-Output "Independent expected source: $ExpectedSource"
 }
 finally {
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }

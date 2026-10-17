@@ -81,7 +81,7 @@ public sealed class PackageLifecycleTests : IDisposable
         }
         var invalidNuspecOutput = Path.Combine(_root, "invalid-nuspec-out");
         var nuspecError = await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(invalidNuspec, invalidNuspecOutput, null));
-        Assert.Equal("Invalid NuGet package.", nuspecError.Message);
+        Assert.Equal("Package is missing .nuget-content/manifest.json.", nuspecError.Message);
         Assert.Equal(1, nuspecError.ExitCode);
         Assert.False(Directory.Exists(invalidNuspecOutput));
 
