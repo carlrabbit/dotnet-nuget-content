@@ -44,11 +44,10 @@ dotnet-nuget-content history --package ./feed/example.assets.1.1.0.nupkg
 
 Managed pack without `--output` defaults its output to the **parent of the workspace**. It never updates the workspace baseline. To work on the new version, unpack it into a new directory.
 
-The generated `example.assets` package is distinct from the `dotnet-nuget-content` tool package. To consume it, create a .NET project and register the local `feed` directory as a NuGet source:
+The generated `example.assets` package is distinct from the `dotnet-nuget-content` tool package. To consume it, create a .NET project and add the generated package using the local `feed` directory:
 
 ```powershell
 dotnet new console -o ./consumer
-dotnet nuget add source (Resolve-Path ./feed).Path --name example-local-feed
 dotnet add ./consumer package example.assets --version 1.1.0 --source ./feed
 dotnet build ./consumer
 ```
@@ -61,7 +60,7 @@ This adds a `PackageReference` to `consumer.csproj`, equivalent to:
 </ItemGroup>
 ```
 
-The `dotnet nuget add source` command updates the user's NuGet configuration; remove the example source afterward using `dotnet nuget remove source example-local-feed`. Alternatively, configure an isolated `NuGet.Config` for this example.
+The `--source` option uses the local feed for the package-add operation without changing the user's persistent NuGet sources.
 
 Content files preserve relative paths and are copied to output. The `.nuget-content` manifest is not copied into the consumer output.
 
