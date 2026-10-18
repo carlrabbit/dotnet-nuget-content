@@ -159,6 +159,28 @@ function Invoke-MockPublicationChecks {
             throw 'A failed first push did not record honest partial publication state and recovery guidance.'
         }
 
+        # A failure after the RID package succeeds must record the partial public state.
+        $secondTrace = [System.Collections.Generic.List[string]]::new()
+        try {
+            Invoke-PublishSequence $candidate {
+                param($path, $id, $hash)
+                $secondTrace.Add($id)
+                if ($id -eq $topId) { throw 'mock second push failure' }
+            }
+            throw 'Mock second push failure was not propagated.'
+        } catch {
+            if ($_.Exception.Message -ne 'mock second push failure') { throw }
+        }
+        if (($secondTrace -join ',') -ne "$ridId,$topId" -or (@($script:publishCompleted) -join ',') -ne $ridId) {
+            throw 'Second-push failure did not preserve RID-only completion state.'
+        }
+        $secondStatusPath = Join-Path $testRoot 'mock-second-publication-status.json'
+        Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock second push failure' $secondStatusPath
+        $secondStatus = Get-Content -LiteralPath $secondStatusPath -Raw | ConvertFrom-Json
+        if ($secondStatus.failedPackage -ne $topId -or (@($secondStatus.published) -join ',') -ne $ridId -or $secondStatus.recovery -notmatch 'Verify it on NuGet.org') {
+            throw 'Second-push failure did not record correct partial-publication recovery.'
+        }
+
         foreach ($case in @(
             @{ Target = 'https://example.invalid/v3/index.json'; Phrase = $approvalPhrase },
             @{ Target = $expectedSource; Phrase = 'yes' }
@@ -172,7 +194,7 @@ function Invoke-MockPublicationChecks {
         $rejected = $false
         try { Get-QualifiedCandidate $testRoot } catch { $rejected = $true }
         if (-not $rejected) { throw 'Candidate hash tampering was not rejected.' }
-        Write-Output 'Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, first-push stop, wrong feed, missing approval, and hash tampering are rejected or recorded.'
+        Write-Output 'Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, both first- and second-push failure states, wrong feed, missing approval, and hash tampering are rejected or recorded.'
     } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
