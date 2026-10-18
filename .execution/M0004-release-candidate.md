@@ -27,7 +27,7 @@ Milestone: `docs/milestones/M0004-release-candidate.md`. Planner owns immutable 
 | EC-04b | AC-04 | Installed Native AOT version and RID | VAL-03 | Exact local-feed candidate installs; shim runs AMD64 PE from `tools/any/win-x64`; `--version` is `1.0.0`; executable hash recorded in installed log | complete |
 | EC-05a | AC-05 | Default/prepare never publishes | VAL-04 | `-Prepare` built and qualified locally; implementation places publish branch behind `-Publish`; preparation invokes local-feed validation only and report has `published:false` | complete |
 | EC-06a | AC-06 | RID-first publication command order | VAL-04 | Mock trace asserted `dotnet-nuget-content.win-x64` before `dotnet-nuget-content` | complete |
-| EC-06b | AC-06 | Failed first push stops pointer and records partial state | VAL-04 | Mock throws on first (RID) push; trace contains only RID; status JSON records none published, RID failed, and recovery guidance | complete |
+| EC-06b | AC-06 | Failed first push stops pointer and records partial state | VAL-04 | Previous evidence: mock throws on first (RID) push; trace contains only RID; status JSON records none published, RID failed, and recovery guidance. New second-push case added in script; execution evidence pending | complete |
 | EC-07a | AC-07 | Global-equivalent installed tool | VAL-03 | Exact candidate installed under isolated `--tool-path`; version, lifecycle, update `1.0.1`, and uninstall passed | complete |
 | EC-07b | AC-07 | Local-manifest and independent consumer | VAL-03 | Exact candidate installed/updated/uninstalled by isolated local manifest; consumer built from local feed and output bytes compared with independent workspace source | complete |
 | EC-08a | AC-08 | Verified license provenance | VAL-02 | Repository `LICENSE` is Unlicense; commit author evidence identifies Martin Koch; package metadata is `Unlicense`; no missing-license decision | complete |
@@ -51,7 +51,7 @@ Implementation-owned: derive after inspecting the live repository.
 
 Last completed work package: WP-04 candidate qualification and evidence audit
 Current work package: complete
-Next action: open implementation PR against `main`; public publication remains outside M0004
+Next action: rerun -TestPublish after new second-push test; reconcile VAL-04 and release notes. After merge, prepare an entirely new candidate on final merged commit before public approval.
 Known agent-resolvable gaps: none
 External blockers: none; existing SDK/MSVC Native AOT toolchain and repository Unlicense were verified
 
