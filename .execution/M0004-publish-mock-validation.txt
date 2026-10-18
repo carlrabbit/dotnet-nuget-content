@@ -1,0 +1,1 @@
+Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, both first- and second-push failure states, wrong feed, missing approval, and hash tampering are rejected or recorded.

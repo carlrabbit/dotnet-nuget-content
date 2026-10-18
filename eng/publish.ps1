@@ -95,9 +95,9 @@ function Save-PublicationFailureStatus($Candidate, [string[]] $Completed, [strin
         failedPackage = if ($completedPackages.Count -eq 0) { $ridId } else { $topId }
         error = $ErrorText
         recovery = if ($completedPackages.Count -eq 1) {
-            "RID package $ridId was accepted. Verify it on NuGet.org, then publish the unchanged top-level package $topId from candidate.json."
+            "RID package $ridId $version was reported accepted. Verify it on NuGet.org, then publish the unchanged top-level package $topId $version from candidate.json; do not rebuild."
         } else {
-            'No package is recorded as published. Resolve the failure before retrying the verified candidate.'
+            "No successful push was reported. Check NuGet.org for $ridId $version before retrying; if absent, correct the cause and retry the same candidate. Do not push $topId until RID package acceptance is confirmed."
         }
     }
     $status | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding utf8
@@ -155,7 +155,7 @@ function Invoke-MockPublicationChecks {
         $mockStatusPath = Join-Path $testRoot 'mock-publication-status.json'
         Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock first push failure' $mockStatusPath
         $mockStatus = Get-Content -LiteralPath $mockStatusPath -Raw | ConvertFrom-Json
-        if ($mockStatus.failedPackage -ne $ridId -or @($mockStatus.published).Count -ne 0 -or $mockStatus.recovery -notmatch 'No package is recorded as published') {
+        if ($mockStatus.failedPackage -ne $ridId -or @($mockStatus.published).Count -ne 0 -or $mockStatus.recovery -notmatch "Check NuGet.org for $ridId 1.0.0" -or $mockStatus.recovery -notmatch "Do not push $topId") {
             throw 'A failed first push did not record honest partial publication state and recovery guidance.'
         }
 
@@ -177,7 +177,7 @@ function Invoke-MockPublicationChecks {
         $secondStatusPath = Join-Path $testRoot 'mock-second-publication-status.json'
         Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock second push failure' $secondStatusPath
         $secondStatus = Get-Content -LiteralPath $secondStatusPath -Raw | ConvertFrom-Json
-        if ($secondStatus.failedPackage -ne $topId -or (@($secondStatus.published) -join ',') -ne $ridId -or $secondStatus.recovery -notmatch 'Verify it on NuGet.org') {
+        if ($secondStatus.failedPackage -ne $topId -or (@($secondStatus.published) -join ',') -ne $ridId -or $secondStatus.recovery -notmatch "Verify it on NuGet.org, then publish the unchanged top-level package $topId 1.0.0" -or $secondStatus.recovery -notmatch 'do not rebuild') {
             throw 'Second-push failure did not record correct partial-publication recovery.'
         }
 
