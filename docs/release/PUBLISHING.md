@@ -14,3 +14,9 @@ Implement repository-owned `eng/publish.ps1` (PowerShell) as a conventional oper
 - No implicit new CI infrastructure, tool provisioning, machine configuration changes, or production release execution.
 - Output a durable candidate report containing exact Git SHA, SDK/compiler, version, package IDs/paths/hashes, installed command validation and consumer evidence, and a separate human publication checklist.
 - Public release **is not part of M0004's completion**. Completion state means candidate qualified and manual publication tool ready; subsequent human approval is required.
+
+## Final merged-source qualification
+
+The M0004 implementation-branch candidate is **pre-merge evidence**, not automatically the final public release candidate. After PR merge and before requesting publication approval, run `eng/publish.ps1 -Prepare` again on the clean, intended final merged release commit using the authorized Windows x64 toolchain. Verify that the resulting `candidate.json` records that exact commit and that both newly created packages pass the complete installed-tool/consumer and mock-publishing gates. Keep these exact files, their SHA-256 values and receipts together; submit them for human approval. Only these approved bytes may be published, without rebuilding in `-Publish` mode. A further source change requires fresh qualification and approval.
+
+Dry-run publication checks cover failure before RID publication **and** failure of the top-level pointer after a successful RID publication, including partial-publication status and recovery instructions.
