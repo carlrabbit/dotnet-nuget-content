@@ -23,31 +23,45 @@ dotnet tool run dotnet-nuget-content -- --version
 
 ## Quick start
 
-Create the first immutable package from a folder with files:
+Create a working example in a new, empty directory:
 
 ```powershell
-dotnet-nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./example.assets.1.0.0.nupkg
-dotnet-nuget-content unpack --package ./example.assets.1.0.0.nupkg --destination ./working-copy
+New-Item -ItemType Directory -Force ./assets, ./feed | Out-Null
+Set-Content -LiteralPath ./assets/example.txt -Value 'Example content'
+dotnet-nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./feed/example.assets.1.0.0.nupkg
+dotnet-nuget-content unpack --package ./feed/example.assets.1.0.0.nupkg --destination ./working-copy
 dotnet-nuget-content status --source ./working-copy
 ```
 
-Change some files in `working-copy`. Then inspect and create the next version:
+Change a file in `working-copy`, then inspect and create the next version:
 
 ```powershell
+Set-Content -LiteralPath ./working-copy/example.txt -Value 'Updated content'
 dotnet-nuget-content status --source ./working-copy --json
-dotnet-nuget-content pack --source ./working-copy --version 1.1.0 --message "Refresh assets"
-dotnet-nuget-content history --package ./example.assets.1.1.0.nupkg
+dotnet-nuget-content pack --source ./working-copy --version 1.1.0 --output ./feed/example.assets.1.1.0.nupkg --message "Refresh assets"
+dotnet-nuget-content history --package ./feed/example.assets.1.1.0.nupkg
 ```
 
-Managed pack defaults its output to the **parent of the workspace**. It never updates the workspace baseline. To work on the new version, unpack it into a new directory.
+Managed pack without `--output` defaults its output to the **parent of the workspace**. It never updates the workspace baseline. To work on the new version, unpack it into a new directory.
 
-To consume the generated content package from a .NET project, make the `.nupkg` available through a NuGet source and add:
+The generated `example.assets` package is distinct from the `dotnet-nuget-content` tool package. To consume it, create a .NET project and register the local `feed` directory as a NuGet source:
+
+```powershell
+dotnet new console -o ./consumer
+dotnet nuget add source (Resolve-Path ./feed).Path --name example-local-feed
+dotnet add ./consumer package example.assets --version 1.1.0 --source ./feed
+dotnet build ./consumer
+```
+
+This adds a `PackageReference` to `consumer.csproj`, equivalent to:
 
 ```xml
 <ItemGroup>
   <PackageReference Include="example.assets" Version="1.1.0" />
 </ItemGroup>
 ```
+
+The `dotnet nuget add source` command updates the user's NuGet configuration; remove the example source afterward using `dotnet nuget remove source example-local-feed`. Alternatively, configure an isolated `NuGet.Config` for this example.
 
 Content files preserve relative paths and are copied to output. The `.nuget-content` manifest is not copied into the consumer output.
 
