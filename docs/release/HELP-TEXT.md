@@ -1,0 +1,30 @@
+# Root CLI help — M0004 final authored copy
+
+Replace the existing root help string with this wording, keeping valid command syntax and output readable on a Windows terminal. No new CLI command framework or subcommand help is required.
+
+```text
+dotnet-nuget-content — immutable NuGet packages for arbitrary files
+
+Usage:
+  dotnet-nuget-content --help
+  dotnet-nuget-content --version
+  dotnet-nuget-content pack --id <id> --version <version> --source <dir> --output <file.nupkg>
+  dotnet-nuget-content pack --version <version> [--source <workspace>] [--output <file.nupkg>] [--message <text>]
+  dotnet-nuget-content unpack --package <file.nupkg> --destination <dir> [--sha256 <hash>]
+  dotnet-nuget-content status [--source <workspace> | --package <file.nupkg>] [--json]
+  dotnet-nuget-content history [--source <workspace> | --package <file.nupkg>] [--json]
+  dotnet-nuget-content hash --path <file> [--expect <hash>]
+
+Workflow:
+  First package: pack --id ... --version ... --source ... --output ...
+  Update: unpack, edit workspace files, status, pack --version ...
+  Inspect: status and history; add --json for structured output.
+
+Managed status, history and pack use the current directory by default; they
+never search parent directories. Managed pack needs changes and a higher
+version. Without --output it writes beside the workspace, leaving its baseline
+unchanged. Existing output files and extraction destinations are not replaced.
+
+Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
+Errors are written to stderr.
+```
