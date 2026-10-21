@@ -201,6 +201,65 @@ try {
     Assert-ToolResult $localVersion 0 'Local manifest invocation'
     if ($localVersion.Stdout -ne "$version`r`n" -or $localVersion.Stderr) { throw 'Local manifest invocation reported an unexpected version or diagnostic.' }
 
+    $projectRoot = Join-Path $work 'M0005 project workspace'
+    $fixtureSource = Join-Path $work 'workspace fixture source'
+    $toolSource = Join-Path $work 'workspace tool source'
+    $workspaceFeed = Join-Path $projectRoot 'feed'
+    New-Item -ItemType Directory -Force -Path $projectRoot, $workspaceFeed, $fixtureSource, $toolSource | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $fixtureSource 'fixture.txt'), 'fixtures v1')
+    [System.IO.File]::WriteAllBytes((Join-Path $fixtureSource 'fixture.bin'), [byte[]](0, 255, 17, 128))
+    [System.IO.File]::WriteAllText((Join-Path $toolSource 'tool.txt'), 'tools v1')
+    $fixturePackage = Join-Path $workspaceFeed 'sample.workspace.fixtures.1.0.0.nupkg'
+    $toolPackage = Join-Path $workspaceFeed 'sample.workspace.tools.2.0.0.nupkg'
+    Assert-ToolResult (Invoke-Tool @('pack', '--id', 'sample.workspace.fixtures', '--version', '1.0.0', '--source', $fixtureSource, '--output', $fixturePackage)) 0 'M0005 fixture package creation'
+    Assert-ToolResult (Invoke-Tool @('pack', '--id', 'sample.workspace.tools', '--version', '2.0.0', '--source', $toolSource, '--output', $toolPackage)) 0 'M0005 tools package creation'
+    Assert-ToolResult (Invoke-Tool @('workspace', 'init', '--workspace', $projectRoot)) 0 'M0005 workspace init'
+    Assert-ToolResult (Invoke-Tool @('workspace', 'add', '--alias', 'fixtures', '--package', $fixturePackage, '--workspace', $projectRoot)) 0 'M0005 fixture registration'
+    Assert-ToolResult (Invoke-Tool @('workspace', 'add', '--alias', 'tools', '--package', $toolPackage, '--workspace', $projectRoot)) 0 'M0005 tools registration'
+    $listed = Invoke-Tool @('workspace', 'list', '--workspace', $projectRoot, '--json')
+    Assert-ToolResult $listed 0 'M0005 deterministic member list'
+    if ((Assert-JsonLine $listed.Stdout 'M0005 workspace list').members.Count -ne 2) { throw 'M0005 workspace did not list both independently pinned packages.' }
+    Assert-ToolResult (Invoke-Tool @('workspace', 'unpack', '--all', '--workspace', $projectRoot)) 0 'M0005 unpack all'
+    $fixtureCopy = Join-Path $projectRoot 'content/fixtures'
+    $toolCopy = Join-Path $projectRoot 'content/tools'
+    foreach ($relative in @('fixture.txt', 'fixture.bin')) {
+        if ((Get-FileHash -LiteralPath (Join-Path $fixtureSource $relative) -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $fixtureCopy $relative) -Algorithm SHA256).Hash) { throw "M0005 unpack changed fixture bytes: $relative" }
+    }
+    if ([System.IO.File]::ReadAllText((Join-Path $toolCopy 'tool.txt')) -ne 'tools v1') { throw 'M0005 tools member unpack changed content.' }
+    $cleanMembers = Invoke-Tool @('workspace', 'status', '--all', '--workspace', $projectRoot, '--json')
+    Assert-ToolResult $cleanMembers 0 'M0005 all-member clean status'
+    if ((Assert-JsonLine $cleanMembers.Stdout 'M0005 status').members.state -contains 'modified') { throw 'M0005 unpacked members were not clean.' }
+
+    [System.IO.File]::WriteAllText((Join-Path $projectRoot 'Directory.Packages.props'), '<Project><ItemGroup><PackageVersion Include="sample.workspace.fixtures" Version="1.0.0" /></ItemGroup></Project>')
+    [System.IO.File]::WriteAllText((Join-Path $projectRoot 'App.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="sample.workspace.fixtures" /></ItemGroup></Project>')
+    $assetsDir = Join-Path $projectRoot 'obj'; New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $assetsDir 'project.assets.json'), '{"version":3,"libraries":{"sample.workspace.fixtures/1.0.0":{"type":"package"}}}')
+    $usage = Invoke-Tool @('workspace', 'usage', '--all', '--workspace', $projectRoot, '--json')
+    Assert-ToolResult $usage 0 'M0005 usage discovery'
+    $usageJson = Assert-JsonLine $usage.Stdout 'M0005 usage'
+    $fixtureUsage = $usageJson.members | Where-Object { $_.alias -eq 'fixtures' }
+    if ($fixtureUsage.useSites.Count -ne 1 -or $fixtureUsage.useSites[0].classification -ne 'directPackageReferenceWithCentralVersion') { throw 'M0005 did not classify a direct centrally-versioned PackageReference.' }
+    if ($fixtureUsage.previousAssetsEvidence.Count -ne 1 -or $fixtureUsage.previousAssetsEvidence[0].state -ne 'previousRestoreUnknownFreshness') { throw 'M0005 did not label previous assets evidence with unknown freshness.' }
+
+    $workspaceMarker = Join-Path $projectRoot 'nuget-content.json'
+    $markerBeforePack = [System.IO.File]::ReadAllBytes($workspaceMarker)
+    [System.IO.File]::WriteAllText((Join-Path $fixtureCopy 'fixture.txt'), 'fixtures v2')
+    $modifiedMember = Invoke-Tool @('workspace', 'status', '--alias', 'fixtures', '--workspace', $projectRoot, '--json')
+    Assert-ToolResult $modifiedMember 0 'M0005 modified member status'
+    if ((Assert-JsonLine $modifiedMember.Stdout 'M0005 modified status').members[0].state -ne 'modified') { throw 'M0005 modified member status was not classified.' }
+    $workspacePack = Invoke-Tool @('workspace', 'pack', '--alias', 'fixtures', '--version', '1.1.0', '--workspace', $projectRoot)
+    Assert-ToolResult $workspacePack 0 'M0005 member pack'
+    $nextFixturePackage = Join-Path $projectRoot 'content/sample.workspace.fixtures.1.1.0.nupkg'
+    if (-not (Test-Path -LiteralPath $nextFixturePackage) -or [Convert]::ToHexString($markerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($workspaceMarker))) { throw 'M0005 member pack changed its pin or failed to create its new package.' }
+    $failedSet = Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--workspace', $projectRoot)
+    Assert-ToolResult $failedSet 1 'M0005 incompatible working-copy pin transition'
+    if ($failedSet.Stdout -or [Convert]::ToHexString($markerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($workspaceMarker))) { throw 'M0005 rejected pin transition changed the root manifest.' }
+    Move-Item -LiteralPath $fixtureCopy -Destination (Join-Path $work 'saved old fixture workspace')
+    Assert-ToolResult (Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--workspace', $projectRoot)) 0 'M0005 explicit pin advancement'
+    Assert-ToolResult (Invoke-Tool @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $projectRoot)) 0 'M0005 unpack advanced pin'
+    if ([System.IO.File]::ReadAllText((Join-Path $fixtureCopy 'fixture.txt')) -ne 'fixtures v2') { throw 'M0005 advanced pin did not materialize its package snapshot.' }
+    Write-Output 'M0005 installed workspace validation passed: two local pins, deterministic JSON list/status, unpack-all byte checks, direct centrally versioned use and prior-assets evidence, managed pack baseline preservation, rejected incompatible set, and explicit higher-version pin advancement.'
+
     $source = Join-Path $work 'independent source'
     $workspace = Join-Path $work 'managed workspace'
     $initialPackage = Join-Path $work 'initial snapshot.nupkg'

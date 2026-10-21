@@ -27,3 +27,7 @@ Manage arbitrary, long-lived content—especially test data and external binary 
 ## Out of scope for M0002
 
 No migration/legacy compatibility, version auto-increment, remote feeds/publish/restore, merges/branches, concurrent editors, author identity/authentication, historical payload reconstruction, user-defined manifest configurations, generalized untrusted-archive handling, or public reusable library API.
+
+## Project-integrated workspaces (M0005)
+
+The `workspace` command namespace coordinates multiple independently pinned local managed content packages for one explicit project root. Its root marker is `nuget-content.json` with `schemaVersion: 1`; its contract is `docs/specs/M0005-project-workspace.md` and its schema is `docs/specs/M0005-project-workspace.schema.json`. The marker is root-relative configuration; package files must already exist locally. Workspace commands never change the legacy command routing or M0003 JSON v1. Pin advancement is explicit via `workspace set` after a verified same-ID higher-version package and a compatible working copy. `workspace usage` is an on-demand, read-only scan of the selected project tree, without restore, network, project edits, or claims beyond observed local declaration/prior-assets evidence. Windows x64 Native AOT remains the only distributed tool target.

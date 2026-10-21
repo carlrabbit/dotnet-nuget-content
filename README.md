@@ -79,6 +79,22 @@ Content files preserve relative paths and are copied to output. The `.nuget-cont
 
 Run `dotnet-nuget-content --help` for full syntax. Managed commands use the exact current directory when `--source` is omitted; they do not search parent directories. Existing packages and extraction destinations are never overwritten. JSON output is available for `status` and `history`; consult [the JSON contract](docs/specs/M0003-cli-json.md).
 
+## Project-integrated package workspaces
+
+A repository can coordinate several independent content packages with a checked-in `nuget-content.json`. Start in the project root. Package files are local, pinned inputs; the tool does not restore or download them.
+
+```powershell
+dotnet-nuget-content workspace init
+dotnet-nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
+dotnet-nuget-content workspace add --alias tools --package ./feed/example.tools.2.0.0.nupkg
+dotnet-nuget-content workspace list --json
+dotnet-nuget-content workspace unpack --all
+dotnet-nuget-content workspace status --all --json
+dotnet-nuget-content workspace usage --all --json
+```
+
+Each alias has its own managed directory under `content/` by default. Edit a member and create a new immutable package with `workspace pack --alias fixtures --version 1.2.0`; the command leaves both its baseline and project pin unchanged. After placing the new package under the project root, advance the pin explicitly with `workspace set --alias fixtures --package ./feed/example.assets.1.2.0.nupkg`. A member with an existing work copy must already have the new package's clean baseline before the pin can advance; the tool does not delete or replace work. Usage discovery examines local project declarations and optional previous `project.assets.json` evidence without running restore. Its evidence is limited to the selected project tree and prior assets may be stale. See the [workspace contract](docs/specs/M0005-project-workspace.md) and [workspace JSON contract](docs/specs/M0005-workspace-cli-json.md).
+
 Exit codes: 0 success; 1 operation/integrity failure; 2 usage error. Errors go to stderr.
 
 ## Limitations

@@ -43,4 +43,19 @@ The generated project contains a `PackageReference` to `example.assets`, and its
 
 Use `status --json` and `history --json` for automation. The tool supports trusted content only; there is no cross-platform release or standalone executable download.
 
+## Project workspaces
+
+Repositories that use several content packages can create a checked-in project marker and pin local packages independently:
+
+```powershell
+dotnet-nuget-content workspace init
+dotnet-nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
+dotnet-nuget-content workspace list --json
+dotnet-nuget-content workspace unpack --all
+dotnet-nuget-content workspace status --all --json
+dotnet-nuget-content workspace usage --all --json
+```
+
+Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. Repacking a member creates an immutable package but leaves the project pin unchanged; advance it explicitly with `workspace set`. Usage output covers observed local project declarations and labels optional prior restore assets with unknown freshness. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md).
+
 [Complete documentation and source](https://github.com/carlrabbit/dotnet-nuget-content)

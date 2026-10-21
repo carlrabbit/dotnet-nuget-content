@@ -27,4 +27,8 @@ unchanged. Existing output files and extraction destinations are not replaced.
 
 Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
 Errors are written to stderr.
+
+Project workspaces:
+  dotnet-nuget-content workspace --help
+  dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage
 ```

@@ -1,0 +1,25 @@
+M0005 installed workspace validation passed: two local pins, deterministic JSON list/status, unpack-all byte checks, direct centrally versioned use and prior-assets evidence, managed pack baseline preservation, rejected incompatible set, and explicit higher-version pin advancement.
+  Determining projects to restore...
+  Restored C:\Users\carlt\AppData\Local\Temp\dotnet nuget content consumer-35f5bd3b47b54f56b3b8c6b6b7b46ae0\consumer\Consumer.csproj (in 386 ms).
+C:\Program Files\dotnet\sdk\11.0.100-rc.1.26425.128\Sdks\Microsoft.NET.Sdk\targets\Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [C:\Users\carlt\AppData\Local\Temp\dotnet nuget content consumer-35f5bd3b47b54f56b3b8c6b6b7b46ae0\consumer\Consumer.csproj]
+  Consumer -> C:\Users\carlt\AppData\Local\Temp\dotnet nuget content consumer-35f5bd3b47b54f56b3b8c6b6b7b46ae0\consumer\bin\Release\net11.0\Consumer.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:02.35
+Consumer validation passed using native executable: C:\Users\carlt\AppData\Local\Temp\dotnet-nuget-content M0003 92978301abca4a0da43807fc389bd60d\isolated global-equivalent tools\dotnet-nuget-content.cmd
+Consumer package: C:\Users\carlt\AppData\Local\Temp\dotnet nuget content consumer-35f5bd3b47b54f56b3b8c6b6b7b46ae0\feed\sample.installed.1.1.0.nupkg
+Consumed manifest package: sample.installed 1.1.0
+Independent expected source: C:\Users\carlt\AppData\Local\Temp\dotnet-nuget-content M0003 92978301abca4a0da43807fc389bd60d\managed workspace
+M0003 installed tool validation passed.
+Local feed: C:\Users\carlt\AppData\Local\Temp\dotnet-nuget-content M0003 92978301abca4a0da43807fc389bd60d\isolated local NuGet feed
+Global-equivalent/local installs, updates and uninstalls: 0.1.0 -> 0.1.1
+Installed Native AOT PE: C:\Users\carlt\AppData\Local\Temp\dotnet-nuget-content M0003 92978301abca4a0da43807fc389bd60d\isolated global-equivalent tools\.store\dotnet-nuget-content\0.1.0\dotnet-nuget-content.win-x64\0.1.0\tools\any\win-x64\dotnet-nuget-content.exe
+Installed executable SHA-256: 0363DC238DD1AE3B3D29C733E7D65FBBA2CEA212857BBCD839F4468A80173F8B
+Top-level package SHA-256: 1D66B459D24EBDB3DEB84226E98DE7696591ACAA04079D6B4D3339546883F17F
+win-x64 package SHA-256: B2FBA4802936A1DFC91A36FB43A9B34492C0FF6D11EBEA4821029E18EE8D0874
+Longest tested Unicode path length: 226 characters
+Forced termination observed a 83202-byte staging file; final path stayed absent; staging remnant after kill: True.
+Handled malformed-package failure separately removed its staging directory; installed lifecycle, JSON/text streams, independent consumer byte oracle, 301 files, nested Unicode path, 64 MiB payload, and conflict checks passed.
