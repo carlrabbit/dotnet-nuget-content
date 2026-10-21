@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-workspace-cli-json.schema.json",
+  "title": "dotnet-nuget-content project workspace CLI JSON v1",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "kind", "members"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "kind": { "const": "workspaceList" },
+        "members": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["alias", "packageId", "version", "packageFile", "directory", "directoryPresent"],
+          "properties": { "alias": { "type": "string" }, "packageId": { "type": "string" }, "version": { "type": "string" }, "packageFile": { "type": "string" }, "directory": { "type": "string" }, "directoryPresent": { "type": "boolean" } }
+        } }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "kind", "members"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "kind": { "const": "workspaceStatus" },
+        "members": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["alias", "packageId", "version", "state", "added", "modified", "deleted"],
+          "properties": { "alias": { "type": "string" }, "packageId": { "type": "string" }, "version": { "type": "string" }, "state": { "enum": ["missing", "clean", "modified", "corrupt", "mismatched"] }, "added": { "type": "array", "items": { "type": "string" } }, "modified": { "type": "array", "items": { "type": "string" } }, "deleted": { "type": "array", "items": { "type": "string" } }, "error": { "type": "string" } }
+        } }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "kind", "members", "diagnostics"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "kind": { "const": "workspaceUsage" },
+        "diagnostics": { "type": "array", "items": { "type": "string" } },
+        "members": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["alias", "packageId", "useSites", "centralVersionDeclarations", "previousAssetsEvidence"],
+          "properties": {
+            "alias": { "type": "string" }, "packageId": { "type": "string" },
+            "useSites": { "type": "array", "items": { "$ref": "#/$defs/site" } },
+            "centralVersionDeclarations": { "type": "array", "items": { "$ref": "#/$defs/site" } },
+            "previousAssetsEvidence": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["project", "assetsFile", "state", "version"], "properties": { "project": { "type": "string" }, "assetsFile": { "type": "string" }, "state": { "const": "previousRestoreUnknownFreshness" }, "version": { "type": "string" } } } }
+          }
+        } }
+      }
+    }
+  ],
+  "$defs": {
+    "site": { "type": "object", "additionalProperties": false, "required": ["path", "classification"], "properties": { "path": { "type": "string" }, "classification": { "type": "string" }, "centralVersion": { "type": "string" } } }
+  }
+}
