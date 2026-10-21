@@ -49,9 +49,54 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Contains("1.0.0", await File.ReadAllTextAsync(Path.Combine(root, "content", "fixtures", ".nuget-content", "manifest.json")));
 
         var beforeFailure = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
+        var oldWorkspaceContent = await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt"));
+        var newPackageBytes = await File.ReadAllBytesAsync(outputPackage);
+        var originalPackageBytes = await File.ReadAllBytesAsync(p1);
+        var independentPackageBytes = await File.ReadAllBytesAsync(p2);
         Assert.Equal(1, await Run(root, "workspace", "set", "--alias", "fixtures", "--package", "content/fixtures.pkg.1.1.0.nupkg"));
         Assert.Equal(beforeFailure, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
-        Assert.True(File.Exists(p1)); Assert.True(File.Exists(p2));
+        Assert.Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
+        Assert.Equal(newPackageBytes, await File.ReadAllBytesAsync(outputPackage));
+        Assert.Equal(originalPackageBytes, await File.ReadAllBytesAsync(p1));
+        Assert.Equal(independentPackageBytes, await File.ReadAllBytesAsync(p2));
+
+        Assert.Equal(0, await Run(root, "workspace", "set", "--alias", "fixtures", "--package", "content/fixtures.pkg.1.1.0.nupkg", "--directory", "content/fixtures-1.1.0"));
+        Assert.Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
+        Assert.False(Directory.Exists(Path.Combine(root, "content", "fixtures-1.1.0")));
+        Assert.Equal("fixtures", JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[0].GetProperty("alias").GetString());
+        Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "fixtures"));
+        Assert.Equal("changed", await File.ReadAllTextAsync(Path.Combine(root, "content", "fixtures-1.1.0", "payload.txt")));
+        Assert.Equal(0, await Run(root, "workspace", "status", "--alias", "fixtures", "--json"));
+        using (var clean = JsonDocument.Parse(stdout)) Assert.Equal("clean", clean.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        Assert.Equal("tools", JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[1].GetProperty("alias").GetString());
+    }
+
+    [Fact]
+    public async Task WorkspacePackRejectsMismatchedBaselineBeforeCreatingOutput()
+    {
+        await Package("sample.identity", "1.0.0", "identity");
+        Assert.Equal(0, await Run(root, "workspace", "init"));
+        Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "identity", "--package", "feed/sample.identity.nupkg"));
+        Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "identity"));
+
+        var marker = Path.Combine(root, "nuget-content.json");
+        var original = await File.ReadAllTextAsync(marker);
+        var baselinePath = Path.Combine(root, "content", "identity", ".nuget-content", "manifest.json");
+        var baseline = await File.ReadAllBytesAsync(baselinePath);
+        foreach (var (mismatchedPin, outputName) in new[]
+        {
+            (original.Replace("sample.identity", "sample.other", StringComparison.Ordinal), "wrong-id.nupkg"),
+            (original.Replace("1.0.0", "1.1.0", StringComparison.Ordinal), "wrong-version.nupkg")
+        })
+        {
+            await File.WriteAllTextAsync(marker, mismatchedPin);
+            var output = Path.Combine(root, outputName);
+            Assert.Equal(1, await Run(root, "workspace", "pack", "--alias", "identity", "--version", "1.2.0", "--output", output));
+            Assert.False(File.Exists(output));
+            Assert.Equal(baseline, await File.ReadAllBytesAsync(baselinePath));
+            Assert.Equal("identity", await File.ReadAllTextAsync(Path.Combine(root, "content", "identity", "payload.txt")));
+        }
+        await File.WriteAllTextAsync(marker, original);
     }
 
     [Fact]

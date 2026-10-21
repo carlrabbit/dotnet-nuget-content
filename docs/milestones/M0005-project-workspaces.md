@@ -38,8 +38,8 @@ Package restore/download from feeds; auto project-reference editing/upgrades; au
 - **AC-03** — Workspace init/add/list can establish and enumerate multiple independently pinned members, with read-only listing and meaningful errors for missing/invalid package input.
 - **AC-04** — Workspace unpack single/all safely materializes distinct members using existing managed baseline semantics, prevents overwrites, and reports partial results honestly.
 - **AC-05** — Workspace status single/all distinguishes missing, clean, modified and corrupt/mismatched member baselines, with deterministic machine-readable output.
-- **AC-06** — Workspace pack targets exactly one member, enforces immutable version, content and atomicity requirements and leaves both member baseline and workspace pin unchanged.
-- **AC-07** — Explicit workspace set updates a pin only after verified same-ID higher-version package and compatible working-copy state, atomically and without deleting content.
+- **AC-06** — Workspace pack targets exactly one member, rejects baseline package ID/version mismatches before producing output, enforces immutable version/content/atomicity requirements and leaves both member baseline and workspace pin unchanged.
+- **AC-07** — Explicit workspace set updates a pin only after a verified same-ID higher-version package and compatible selected working-copy state. When adopting from a mismatched existing baseline, it requires a new absent `--directory`, atomically changes the selected directory with the pin, and preserves the old directory and all package files. The new directory is materialized by a subsequent explicit unpack.
 - **AC-08** — Workspace usage reports direct project PackageReference use sites, central-version-only declarations distinctly, and optionally previous resolved assets evidence, without restore, network access or false organization-wide coverage.
 - **AC-09** — Workspace operations and discovery remain bounded on realistic multi-project repositories and do not traverse unrelated/ignored trees or mutate project files.
 - **AC-10** — Public root marker and workspace JSON schemas plus CLI help and README examples are complete and executable, without claiming cross-platform or feed-management support.
@@ -55,8 +55,8 @@ Package restore/download from feeds; auto project-reference editing/upgrades; au
 | EC-03a | AC-03 | Two package IDs, list and independent pins |
 | EC-04a | AC-04 | Unpack one/all, pre-existing directory and second-member failure |
 | EC-05a | AC-05 | Clean/changed/missing/mismatched baselines |
-| EC-06a | AC-06 | Pack one and verify unchanged pin and baseline |
-| EC-07a | AC-07 | Successful explicit set and failed incompatible transition |
+| EC-06a | AC-06 | Pack one and verify unchanged pin/baseline; reject ID and version mismatches before output |
+| EC-07a | AC-07 | Pack-to-new-directory explicit transition, clean unpack, failed transition preservation, and independent second member |
 | EC-08a | AC-08 | Direct + centrally versioned references, no false positive |
 | EC-08b | AC-08 | Optional assets and stale/unknown provenance |
 | EC-09a | AC-09 | Large-repository traversal bounds and exclusion |

@@ -212,6 +212,9 @@ internal static class ProjectWorkspace
         Ensure(options, "alias", "version", "output", "message", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
         var m = FindMember(manifest, Required(options, "alias")); var dir = ResolvePath(root, m.Directory);
         if (!Directory.Exists(dir)) throw new CliException($"Workspace member directory is missing: {m.Directory}", 1);
+        var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(dir);
+        if (!string.Equals(baseline.Package.Id, m.PackageId, StringComparison.OrdinalIgnoreCase) || baseline.Package.Version != m.Version)
+            throw new CliException($"Managed baseline is {baseline.Package.Id} {baseline.Package.Version}, but pin is {m.PackageId} {m.Version}.", 1);
         var output = options.TryGetValue("output", out var specified) ? ResolveInput(root, specified) : null;
         if (output is not null) EnsurePackageOutputOutsideMembers(root, output, manifest.Members);
         else
@@ -226,21 +229,31 @@ internal static class ProjectWorkspace
 
     private static async Task<int> SetAsync(Dictionary<string, string> options)
     {
-        Ensure(options, "alias", "package", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (path, manifest) = await ReadRootAsync(root); var m = FindMember(manifest, Required(options, "alias"));
+        Ensure(options, "alias", "package", "directory", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (path, manifest) = await ReadRootAsync(root); var m = FindMember(manifest, Required(options, "alias"));
         var packagePath = ResolveInput(root, Required(options, "package")); if (!File.Exists(packagePath)) throw new CliException($"Package not found: {packagePath}", 1);
         var next = await ContentPackages.ReadPackageForWorkspaceAsync(packagePath);
         if (!string.Equals(next.Package.Id, m.PackageId, StringComparison.OrdinalIgnoreCase)) throw new CliException($"Package ID must remain '{m.PackageId}'.", 1);
         if (NuGet.Versioning.NuGetVersion.Parse(next.Package.Version) <= NuGet.Versioning.NuGetVersion.Parse(m.Version)) throw new CliException("Workspace pin version must increase.", 1);
-        var dir = ResolvePath(root, m.Directory);
+        var oldDirectory = m.Directory;
+        var nextDirectory = options.TryGetValue("directory", out var requestedDirectory)
+            ? NormalizeRelative(requestedDirectory, "directory")
+            : oldDirectory;
+        var sameDirectory = string.Equals(oldDirectory, nextDirectory, StringComparison.OrdinalIgnoreCase);
+        var dir = ResolvePath(root, nextDirectory);
         if (Directory.Exists(dir))
         {
             var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(dir);
             if (!string.Equals(baseline.Package.Id, next.Package.Id, StringComparison.OrdinalIgnoreCase) || baseline.Package.Version != next.Package.Version || !await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(dir))
-                throw new CliException("Cannot advance the pin while the current working directory has a different or modified baseline; unpack the new package into a new directory before changing the member directory.", 1);
+                throw new CliException("The selected member directory must be absent or contain a clean managed baseline matching the new package. Choose a new unused --directory to preserve the existing work copy.", 1);
+            if (!sameDirectory && !options.ContainsKey("directory"))
+                throw new CliException("Select an explicit --directory when adopting a package from another working copy.", 1);
         }
+        else if (!sameDirectory && !options.ContainsKey("directory"))
+            throw new CliException("Select an explicit --directory when adopting a package from another working copy.", 1);
         var rel = RelativeFromRoot(root, packagePath); if (!rel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Workspace packageFile must refer to a local .nupkg file.", 1);
-        var old = m.PackageFile; m.PackageFile = rel; m.Version = next.Package.Version; ValidateMembers(manifest.Members, root); await WriteAtomicAsync(path, manifest);
-        Console.WriteLine($"Updated {m.Alias}: {m.PackageId} {m.Version} ({old} -> {rel})"); return 0;
+        var old = m.PackageFile; var oldVersion = m.Version; m.PackageFile = rel; m.Version = next.Package.Version; m.Directory = nextDirectory;
+        ValidateMembers(manifest.Members, root); await WriteAtomicAsync(path, manifest);
+        Console.WriteLine($"Updated {m.Alias}: {m.PackageId} {oldVersion} -> {m.Version} ({old} -> {rel}; directory {oldDirectory} -> {nextDirectory})"); return 0;
     }
 
     private static async Task<int> UsageAsync(Dictionary<string, string> options)
@@ -547,7 +560,7 @@ internal static class ProjectWorkspace
           workspace unpack (--alias NAME | --all) [--workspace ROOT]
           workspace status [--alias NAME | --all] [--workspace ROOT] [--json]
           workspace pack --alias NAME --version VERSION [--output FILE] [--message TEXT] [--workspace ROOT]
-          workspace set --alias NAME --package FILE [--workspace ROOT]
+          workspace set --alias NAME --package FILE [--directory REL] [--workspace ROOT]
           workspace usage [--alias NAME | --all] [--workspace ROOT] [--json]
 
         Workspace paths are local to the selected project root. Pin updates are explicit.

@@ -56,6 +56,6 @@ dotnet-nuget-content workspace status --all --json
 dotnet-nuget-content workspace usage --all --json
 ```
 
-Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. Repacking a member creates an immutable package but leaves the project pin unchanged; advance it explicitly with `workspace set`. Usage output covers observed local project declarations and labels optional prior restore assets with unknown freshness. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md).
+Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. Repacking first checks that the managed baseline matches its pin, then creates an immutable package while leaving the pin unchanged. Advance it explicitly with `workspace set --directory content/<new-version-directory>`, using a new absent directory when the current work copy has the old baseline, then unpack the advanced pin. This preserves the old work copy and package files. Usage output covers observed local project declarations and labels optional prior restore assets with unknown freshness. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md).
 
 [Complete documentation and source](https://github.com/carlrabbit/dotnet-nuget-content)

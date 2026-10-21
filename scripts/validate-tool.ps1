@@ -251,14 +251,37 @@ try {
     Assert-ToolResult $workspacePack 0 'M0005 member pack'
     $nextFixturePackage = Join-Path $projectRoot 'content/sample.workspace.fixtures.1.1.0.nupkg'
     if (-not (Test-Path -LiteralPath $nextFixturePackage) -or [Convert]::ToHexString($markerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($workspaceMarker))) { throw 'M0005 member pack changed its pin or failed to create its new package.' }
+    $oldWorkspaceContent = [System.IO.File]::ReadAllBytes((Join-Path $fixtureCopy 'fixture.txt'))
+    $newPackageBytes = [System.IO.File]::ReadAllBytes($nextFixturePackage)
+    $originalFixturePackageBytes = [System.IO.File]::ReadAllBytes($fixturePackage)
+    $independentToolPackageBytes = [System.IO.File]::ReadAllBytes($toolPackage)
+    $markerText = [System.Text.Encoding]::UTF8.GetString($markerBeforePack)
+    [System.IO.File]::WriteAllText($workspaceMarker, $markerText.Replace('"version":"1.0.0"', '"version":"1.0.1"', [System.StringComparison]::Ordinal))
+    $mismatchedPackOutput = Join-Path $projectRoot 'content/mismatched-baseline.nupkg'
+    $mismatchedPack = Invoke-Tool @('workspace', 'pack', '--alias', 'fixtures', '--version', '1.2.0', '--output', $mismatchedPackOutput, '--workspace', $projectRoot)
+    Assert-ToolResult $mismatchedPack 1 'M0005 reject mismatched baseline before output'
+    if (Test-Path -LiteralPath $mismatchedPackOutput) { throw 'M0005 mismatch pack created package output.' }
+    [System.IO.File]::WriteAllBytes($workspaceMarker, $markerBeforePack)
     $failedSet = Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--workspace', $projectRoot)
     Assert-ToolResult $failedSet 1 'M0005 incompatible working-copy pin transition'
-    if ($failedSet.Stdout -or [Convert]::ToHexString($markerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($workspaceMarker))) { throw 'M0005 rejected pin transition changed the root manifest.' }
-    Move-Item -LiteralPath $fixtureCopy -Destination (Join-Path $work 'saved old fixture workspace')
-    Assert-ToolResult (Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--workspace', $projectRoot)) 0 'M0005 explicit pin advancement'
+    $occupiedDirectory = Join-Path $projectRoot 'content/occupied'
+    New-Item -ItemType Directory -Path $occupiedDirectory | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $occupiedDirectory 'keep.txt'), 'keep')
+    $failedTargetSet = Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--directory', 'content/occupied', '--workspace', $projectRoot)
+    Assert-ToolResult $failedTargetSet 1 'M0005 reject occupied adoption directory'
+    if ($failedSet.Stdout -or $failedTargetSet.Stdout -or [Convert]::ToHexString($markerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($workspaceMarker)) -or [Convert]::ToHexString($oldWorkspaceContent) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $fixtureCopy 'fixture.txt'))) -or [Convert]::ToHexString($newPackageBytes) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($nextFixturePackage)) -or [Convert]::ToHexString($originalFixturePackageBytes) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($fixturePackage)) -or [Convert]::ToHexString($independentToolPackageBytes) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($toolPackage)) -or [System.IO.File]::ReadAllText((Join-Path $occupiedDirectory 'keep.txt')) -ne 'keep') { throw 'M0005 rejected transition changed pins, package files, or workspace content.' }
+    $nextFixtureCopy = Join-Path $projectRoot 'content/fixtures-1.1.0'
+    Assert-ToolResult (Invoke-Tool @('workspace', 'set', '--alias', 'fixtures', '--package', $nextFixturePackage, '--directory', 'content/fixtures-1.1.0', '--workspace', $projectRoot)) 0 'M0005 explicit pin advancement to new directory'
+    if ([System.IO.File]::ReadAllText((Join-Path $fixtureCopy 'fixture.txt')) -ne 'fixtures v2' -or (Test-Path -LiteralPath $nextFixtureCopy)) { throw 'M0005 pin transition replaced the old directory or pre-created the new directory.' }
     Assert-ToolResult (Invoke-Tool @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $projectRoot)) 0 'M0005 unpack advanced pin'
-    if ([System.IO.File]::ReadAllText((Join-Path $fixtureCopy 'fixture.txt')) -ne 'fixtures v2') { throw 'M0005 advanced pin did not materialize its package snapshot.' }
-    Write-Output 'M0005 installed workspace validation passed: two local pins, deterministic JSON list/status, unpack-all byte checks, direct centrally versioned use and prior-assets evidence, managed pack baseline preservation, rejected incompatible set, and explicit higher-version pin advancement.'
+    if ([System.IO.File]::ReadAllText((Join-Path $nextFixtureCopy 'fixture.txt')) -ne 'fixtures v2') { throw 'M0005 advanced pin did not materialize its package snapshot.' }
+    $cleanAdvanced = Invoke-Tool @('workspace', 'status', '--alias', 'fixtures', '--json', '--workspace', $projectRoot)
+    Assert-ToolResult $cleanAdvanced 0 'M0005 clean advanced workspace'
+    if ((Assert-JsonLine $cleanAdvanced.Stdout 'M0005 advanced status').members[0].state -ne 'clean') { throw 'M0005 newly unpacked advanced workspace was not clean.' }
+    $independentStatus = Invoke-Tool @('workspace', 'status', '--alias', 'tools', '--json', '--workspace', $projectRoot)
+    Assert-ToolResult $independentStatus 0 'M0005 independent package remains clean'
+    if ((Assert-JsonLine $independentStatus.Stdout 'M0005 independent status').members[0].version -ne '2.0.0') { throw 'M0005 advancing fixtures changed the independent tools pin.' }
+    Write-Output 'M0005 installed workspace validation passed: two independent pins, unpack/modify/pack with unchanged baseline, mismatched-baseline rejection before output, failed-transition preservation, explicit higher-version adoption into a new directory, clean new workspace, and unchanged old workspace.'
 
     $source = Join-Path $work 'independent source'
     $workspace = Join-Path $work 'managed workspace'
