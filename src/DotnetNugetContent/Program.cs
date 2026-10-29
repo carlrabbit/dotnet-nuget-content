@@ -18,6 +18,7 @@ internal static class Cli
         {
             if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"]) { Console.Out.WriteLine(HelpText); return 0; }
             if (args is ["--version"] or ["version"]) { Console.Out.WriteLine(typeof(Cli).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"); return 0; }
+            if (args[0] == "workspace") return await ProjectWorkspace.RunAsync(args[1..]);
             var options = ParseOptions(args[1..]);
             switch (args[0])
             {
@@ -93,6 +94,10 @@ internal static class Cli
 
         Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
         Errors are written to stderr.
+
+        Project workspaces:
+          dotnet-nuget-content workspace --help
+          dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage
         """;
 }
 
@@ -218,6 +223,14 @@ internal static class ContentPackages
             }).ToList()
         };
         return JsonSerializer.Serialize(result, ManifestJsonContext.Default.HistoryResult);
+    }
+    internal static async Task<Manifest> ReadPackageForWorkspaceAsync(string path) => (await ReadPackageManifestAsync(Path.GetFullPath(path), true)).Manifest;
+    internal static async Task<Manifest> ReadWorkspaceBaselineForWorkspaceAsync(string path) => await ReadManifestFileAsync(Path.Combine(ResolveWorkspace(path), ManifestPath));
+    internal static async Task<bool> IsWorkspaceCleanForWorkspaceAsync(string path)
+    {
+        var root = ResolveWorkspace(path); var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath));
+        var diff = Diff(baseline.Files, await InventoryAsync(root));
+        return diff.Added.Count + diff.Modified.Count + diff.Deleted.Count == 0;
     }
     private static JsonChanges ToJsonChanges(ChangeSet changes) => new() { Added = changes.Added.ToList(), Modified = changes.Modified.ToList(), Deleted = changes.Deleted.ToList() };
     public static async Task<string> Sha256Async(string path) { await using var stream = File.OpenRead(path); return Convert.ToHexString(await SHA256.HashDataAsync(stream)); }
