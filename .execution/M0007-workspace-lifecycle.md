@@ -1,7 +1,8 @@
 # M0007 execution ledger
 
 Primary milestone: `docs/milestones/M0007-workspace-lifecycle.md`  
-Implementation branch: `codex/m0007-workspace-lifecycle` (based on fetched `origin/main`, commit `2002a3a`).  
+Implementation branch: `codex/m0007-workspace-lifecycle` (based on fetched `origin/main`, commit `2002a3a`; implementation commit `1118edf`).  
+Pull request: https://github.com/carlrabbit/dotnet-nuget-content/pull/7 (open for required human review).  
 Validation host: Windows 11 x64, .NET SDK `11.0.100-rc.1.26425.128`, xUnit, Native AOT win-x64.  
 No publication, release version change, CI modification, cross-platform target, or test framework migration was performed.
 
@@ -15,10 +16,10 @@ No publication, release version change, CI modification, cross-platform target, 
 | AC-04 | complete | Read-only inspect reports pin/path, workspace state, observed consumer declaration version/provenance and diagnostics. | `workspace inspect`; new schema v1. | `InspectReportsDirectAndCentralConsumerDriftWithVersionedContracts` covers clean, modified, missing, corrupt, mismatched, direct/central drift and dynamic values; VAL-03 and VAL-04. |
 | AC-05 | complete | Candidate scan is immediate-sibling only; only same-ID lower-version managed workspaces are listed, marked clean/modified; reparse and registered members excluded. | `FindCandidatesAsync` enumerates only the pinned directory parent and does not traverse reparse points. | Advance/cleanup xUnit cases and installed workflow verify candidate identification; junction safeguards exercised in VAL-02. |
 | AC-06 | complete | Preview is non-mutating; apply deletes one named proven clean obsolete sibling only. | `CleanupAsync` defaults to preview and revalidates immediately before one recursive removal. | `CleanupPreviewIsReadOnlyAndApplyRemovesOnlyCleanOlderDirectory`; installed real-package preview/apply; immutable package hash preserved. |
-| AC-07 | complete with limitation | Active, modified, unrelated, overlapping, unsafe and reparse targets are blocked; deletion failure is reported as partial with no rollback claim. | `EnsureCleanupTarget`, `ValidateObsoleteCandidateAsync`, revalidation and partial-state handling. | Modified/active/junction rejection and injected delete failure are exercised. A forced process termination during recursive cleanup was not run; see EC-07b. |
+| AC-07 | complete | Active, modified, unrelated, overlapping, unsafe and reparse targets are blocked; deletion failure is reported as partial with no rollback claim. | `EnsureCleanupTarget`, `ValidateObsoleteCandidateAsync`, revalidation and partial-state handling. | Modified/active/junction rejection and injected delete failure are exercised. Abrupt termination remains a documented evidence limitation; see EC-07b. |
 | AC-08 | complete | New versioned inspect/cleanup JSON schemas, help and developer docs; legacy contracts retained. | `docs/specs/M0007-*`, `docs/SPECS.md`, `docs/MILESTONES.md`, READMEs, authored/root/workspace help. | JSON contract tests, pre-existing M0003/M0005/M0006 regression suite, `git diff --check`; `scripts/validate-tool.ps1` checks installed help and prior JSON workflows. |
 | AC-09 | complete | Installed Native AOT tool workflow proves advance, consumer drift, isolation, byte preservation and approved cleanup. | `scripts/validate-tool.ps1` M0007 lifecycle section. | VAL-04 passed. Native executable SHA-256 `E2B52907353C76BD25B7E53CEA105BA3F8B0CFD3EE0967BDD4CAA6524EA5DC4F`; initial package SHA-256 `C90DB4E5E904A5E5F1B6517C3A3A4FA3BD6C560BDA35C583688EC752C4BB2DAF`; consumer bytes matched independently prepared source. |
-| ART-01 | pending final PR | Reconcile all criteria/cases/gates and current branch state. | This ledger. | Implementation and validation are complete; update with PR URL and final commit after push. |
+| ART-01 | complete | Reconcile all criteria/cases/gates and current branch state. | This ledger. | PR #7 created against `main`; implementation commit `1118edf`; all receipts and the remaining EC-07b limitation are recorded here. No release/publication action. |
 
 ## Evidence cases
 
@@ -43,7 +44,7 @@ No publication, release version change, CI modification, cross-platform target, 
 | VAL-02 | pass with limitation | Temporary real `.nupkg` and member trees in xUnit: inspect/cleanup positive and negative paths, clean preview/apply, modified/active/junction guards and injected handled deletion failure. Forced termination during deletion not exercised. |
 | VAL-03 | pass | Project fixture inspection tests cover direct/central/dynamic consumer provenance, version drift, state classifications and M0007 schema. Existing M0003/M0005/M0006 JSON regressions passed. |
 | VAL-04 | pass | `pwsh -NoProfile -File scripts/validate-tool.ps1` passed, including existing installed global/local NuGet-tool workflows and new M0007 real-package/consumer scenario. Fresh win-x64 Native AOT executable SHA-256 recorded above. Consumer source oracle SHA-256 `25336671F059CB34146CCFFFC9A1FA6EB1FB0FF151B82C02EE43E91B7C400B1C`; advanced pin `1.0.1`; cleanup removed only `content/fixtures-clean-old`. |
-| VAL-05 | pending final PR | `pwsh -NoProfile -File scripts/validate-native.ps1` passed after correcting its stale version and M0006 usage-error expectations. `git diff --check` passed. Reconcile PR URL/final commit after push. |
+| VAL-05 | pass | `pwsh -NoProfile -File scripts/validate-native.ps1` passed after correcting its stale version and M0006 usage-error expectations. `git diff --check` passed; documentation and current diff reviewed; PR #7 targets `main`. |
 
 ## Validation notes and limitations
 
@@ -54,4 +55,4 @@ No publication, release version change, CI modification, cross-platform target, 
 
 ## Final reconciliation
 
-Implementation branch is based on current fetched `origin/main`; all required product and developer documentation was updated. No `.NET` tool package was published and no release version was changed. Human PR review remains required by the milestone. PR URL and final commit: pending push/creation.
+Implementation branch is based on current fetched `origin/main`; all required product and developer documentation was updated. PR #7 targets `main` at https://github.com/carlrabbit/dotnet-nuget-content/pull/7. Implementation commit is `1118edf`; ledger reconciliation is committed after that implementation commit. No `.NET` tool package was published and no release version was changed. Human PR review remains required by the milestone. EC-07b's forced-termination probe remains unexecuted; the code reports handled deletion failures as partial and documentation expressly disclaims crash atomicity.
