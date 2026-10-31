@@ -509,7 +509,7 @@ internal static class ProjectWorkspace
         return root;
     }
     private static string ResolveInput(string root, string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
-    private static string ResolvePath(string root, string relative)
+    internal static string ResolvePath(string root, string relative)
     {
         var full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
         if (!IsWithin(root, full)) throw new CliException($"Workspace path escapes project root: {relative}", 1);

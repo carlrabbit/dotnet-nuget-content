@@ -111,6 +111,64 @@ public sealed class M0006Tests : IDisposable
     }
 
     [Fact]
+    public async Task ReferenceUpdateExcludesEveryRegisteredManagedMemberTree()
+    {
+        var selectedOld = await MakePackage("sample.selected", "1.0.0", "old selected");
+        await MakePackage("sample.selected", "1.1.0", "new selected");
+        var otherPackage = await MakePackage("sample.other", "2.0.0", "other member");
+        Assert.Equal(0, await Run("workspace", "init"));
+        Assert.Equal(0, await Run("workspace", "add", "--alias", "selected", "--package", Path.GetRelativePath(root, selectedOld).Replace('\\', '/'), "--directory", "managed/selected"));
+        Assert.Equal(0, await Run("workspace", "add", "--alias", "other", "--package", Path.GetRelativePath(root, otherPackage).Replace('\\', '/'), "--directory", "managed/other"));
+        var setExit = await Run("workspace", "set", "--alias", "selected", "--package", "feed/sample.selected.1.1.0.nupkg");
+        Assert.True(setExit == 0, $"exit={setExit}; stdout={stdout}; stderr={stderr}");
+        Assert.Equal(0, await Run("workspace", "unpack", "--all"));
+
+        var externalProject = Path.Combine(root, "Consumer.csproj");
+        var otherProject = Path.Combine(root, "managed", "other", "Member.csproj");
+        var nestedProject = Path.Combine(root, "managed", "other", "nested", "Nested.csproj");
+        const string projectXml = "<Project><ItemGroup><PackageReference Include=\"sample.selected\" Version=\"1.0.0\" /></ItemGroup></Project>";
+        await File.WriteAllTextAsync(externalProject, projectXml);
+        await File.WriteAllTextAsync(otherProject, projectXml);
+        Directory.CreateDirectory(Path.GetDirectoryName(nestedProject)!);
+        await File.WriteAllTextAsync(nestedProject, projectXml);
+
+        var otherBaselinePath = Path.Combine(root, "managed", "other", ".nuget-content", "manifest.json");
+        var otherBaseline = await File.ReadAllBytesAsync(otherBaselinePath);
+        var otherPackageBytes = await File.ReadAllBytesAsync(otherPackage);
+        var otherProjectBytes = await File.ReadAllBytesAsync(otherProject);
+        var nestedProjectBytes = await File.ReadAllBytesAsync(nestedProject);
+        var workspaceMarker = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
+        Assert.Equal(0, await Run("workspace", "status", "--all", "--json"));
+        using var beforeStatus = JsonDocument.Parse(stdout);
+        var otherStatus = Assert.Single(beforeStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText();
+
+        Assert.Equal(0, await Run("workspace", "references", "update", "--alias", "selected", "--json"));
+        using (var preview = JsonDocument.Parse(stdout))
+        {
+            var changes = preview.RootElement.GetProperty("changes").EnumerateArray().ToArray();
+            var change = Assert.Single(changes);
+            Assert.Equal("Consumer.csproj", change.GetProperty("path").GetString());
+            Assert.Equal("1.0.0", change.GetProperty("oldVersion").GetString());
+            Assert.Equal("1.1.0", change.GetProperty("newVersion").GetString());
+        }
+        Assert.Equal(projectXml, await File.ReadAllTextAsync(externalProject));
+        Assert.Equal(otherProjectBytes, await File.ReadAllBytesAsync(otherProject));
+        Assert.Equal(nestedProjectBytes, await File.ReadAllBytesAsync(nestedProject));
+
+        Assert.Equal(0, await Run("workspace", "references", "update", "--alias", "selected", "--apply", "--json"));
+        using (var applied = JsonDocument.Parse(stdout)) Assert.True(applied.RootElement.GetProperty("applied").GetBoolean());
+        Assert.Contains("Version=\"1.1.0\"", await File.ReadAllTextAsync(externalProject));
+        Assert.Equal(otherProjectBytes, await File.ReadAllBytesAsync(otherProject));
+        Assert.Equal(nestedProjectBytes, await File.ReadAllBytesAsync(nestedProject));
+        Assert.Equal(otherBaseline, await File.ReadAllBytesAsync(otherBaselinePath));
+        Assert.Equal(otherPackageBytes, await File.ReadAllBytesAsync(otherPackage));
+        Assert.Equal(workspaceMarker, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
+        Assert.Equal(0, await Run("workspace", "status", "--all", "--json"));
+        using var afterStatus = JsonDocument.Parse(stdout);
+        Assert.Equal(otherStatus, Assert.Single(afterStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText());
+    }
+
+    [Fact]
     public async Task ReferenceUpdateBlocksDynamicAndConditionalSourcesWithoutPartialWrites()
     {
         var pinned = await MakePackage("sample.blocked", "1.0.0", "old");

@@ -56,7 +56,7 @@ internal static class ConsumerReferenceUpdater
         if (packageCandidates.Error is not null) AddBlocker(plan, packageCandidates.ErrorPath ?? "", "packageVerification", packageCandidates.Error);
         plan.TargetVersion = packageCandidates.Version ?? plan.TargetVersion;
 
-        var excluded = new[] { Path.GetFullPath(Path.Combine(root, member.Directory.Replace('/', Path.DirectorySeparatorChar))) };
+        var excluded = registeredMembers.Select(m => ProjectWorkspace.ResolvePath(root, m.Directory)).ToArray();
         var files = ScanProjectFiles(root, excluded, plan);
         var changes = new List<SourceChange>();
         var centralDeclarations = new Dictionary<string, List<(string Path, XDocument Xml, byte[] Bytes, string Hash, XElement Node, XElement? Version, bool Conditional)>>(StringComparer.OrdinalIgnoreCase);
