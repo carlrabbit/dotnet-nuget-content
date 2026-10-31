@@ -332,6 +332,7 @@ internal static class ProjectWorkspace
 
     internal static Func<string, Task>? AdvanceStageHook { get; set; }
     internal static Func<string, Task>? CleanupDeleteHook { get; set; }
+    internal static Func<string, Task>? InspectSourceReadHook { get; set; }
 
     private static async Task<int> AdvanceAsync(Dictionary<string, string> options)
     {
@@ -352,6 +353,7 @@ internal static class ProjectWorkspace
             ? ResolveInput(root, outputArg)
             : Path.Combine(Directory.GetParent(currentDir)!.FullName, $"{m.PackageId}.{nextVersion}.nupkg");
         var packageRel = RelativeFromRoot(root, packagePath);
+        packagePath = ResolvePath(root, packageRel);
         if (!packageRel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Workspace packageFile must refer to a local .nupkg file.", 1);
         EnsurePackageOutputOutsideMembers(root, packagePath, manifest.Members);
         if (string.Equals(Path.GetFullPath(packagePath), Path.GetFullPath(marker), StringComparison.OrdinalIgnoreCase) ||
@@ -405,15 +407,16 @@ internal static class ProjectWorkspace
             { item.State = ex.Message.Contains("but pin is", StringComparison.Ordinal) || ex.Message.Contains("Pinned package mismatch", StringComparison.Ordinal) ? "mismatched" : "corrupt"; item.Error = ex.Message; }
             if (usage.Members.FirstOrDefault(x => x.Alias == m.Alias) is { } u)
             {
-                foreach (var s in u.UseSites)
+                foreach (var s in u.UseSites.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase))
                 {
-                    var consumer = await ReadConsumerVersionAsync(root, s.Path, m.PackageId, m.Version);
+                    var consumer = await ReadConsumerVersionAsync(root, s.Path, m.PackageId, m.Version, result.Diagnostics);
                     if (consumer is not null) item.Consumers.Add(consumer);
                 }
             }
             item.Candidates = await FindCandidatesAsync(root, m, dir, manifest.Members);
             result.Members.Add(item);
         }
+        result.Diagnostics = result.Diagnostics.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
         if (options.ContainsKey("json")) Console.WriteLine(JsonSerializer.Serialize(result, ProjectWorkspaceJsonContext.Default.WorkspaceInspectResult));
         else foreach (var m in result.Members)
         {
@@ -431,7 +434,7 @@ internal static class ProjectWorkspace
         Ensure(options, "alias", "directory", "workspace", "apply", "json");
         var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root); var m = FindMember(manifest, Required(options, "alias"));
         var rel = NormalizeRelative(Required(options, "directory"), "directory"); var active = ResolvePath(root, m.Directory); var target = ResolvePath(root, rel);
-        var result = new WorkspaceCleanupResult { Alias = m.Alias, Directory = rel, Applied = options.ContainsKey("apply") };
+        var result = new WorkspaceCleanupResult { Alias = m.Alias, Directory = rel };
         var deletionStarted = false;
         try
         {
@@ -446,6 +449,7 @@ internal static class ProjectWorkspace
                 deletionStarted = true;
                 if (CleanupDeleteHook is not null) await CleanupDeleteHook(target);
                 Directory.Delete(target, true);
+                result.Applied = true;
             }
         }
         catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException)
@@ -499,41 +503,82 @@ internal static class ProjectWorkspace
         }
         return result;
     }
-    private static async Task<WorkspaceConsumerVersion?> ReadConsumerVersionAsync(string root, string relPath, string packageId, string pinnedVersion)
+    private static async Task<WorkspaceConsumerVersion?> ReadConsumerVersionAsync(string root, string relPath, string packageId, string pinnedVersion, List<string> diagnostics)
     {
+        var declarationPath = relPath;
+        var kind = "direct";
+        var unresolved = new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
         try
         {
-            var path = ResolvePath(root, relPath); var xml = await LoadXmlAsync(path);
-            var declarationPath = relPath;
-            foreach (var reference in xml.Descendants().Where(x => (x.Name.LocalName is "PackageReference" or "PackageVersion") && string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)))
+            var path = ResolvePath(root, relPath);
+            var before = await File.ReadAllBytesAsync(path);
+            var xml = await LoadXmlAsync(path);
+            if (InspectSourceReadHook is not null) await InspectSourceReadHook(path);
+            var after = await File.ReadAllBytesAsync(path);
+            if (!before.AsSpan().SequenceEqual(after))
             {
-                var version = (string?)reference.Attribute("Version") ?? reference.Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
-                var kind = reference.Name.LocalName == "PackageVersion" ? "central" : "direct";
-                if (version is null && kind == "direct")
-                {
-                    var current = Path.GetDirectoryName(path)!;
-                    while (IsWithin(root, current))
-                    {
-                        var props = Path.Combine(current, "Directory.Packages.props");
-                        if (File.Exists(props))
-                        {
-                            var propsXml = await LoadXmlAsync(props);
-                            var central = propsXml.Descendants().FirstOrDefault(x => x.Name.LocalName == "PackageVersion" && string.Equals((string?)x.Attribute("Include"), packageId, StringComparison.OrdinalIgnoreCase));
-                            version = (string?)central?.Attribute("Version") ?? central?.Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
-                            if (version is not null) { kind = "central"; declarationPath = Relative(root, props); }
-                            break;
-                        }
-                        if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase)) break;
-                        current = Directory.GetParent(current)?.FullName ?? root;
-                    }
-                }
-                var exact = version is not null && NuGet.Versioning.NuGetVersion.TryParse(version, out var parsed) && parsed.ToNormalizedString() == version;
-                var state = version is null ? "unresolved" : version.Contains('$') || version.Contains('*') ? "dynamic" : !exact ? "unresolved" : string.Equals(version, pinnedVersion, StringComparison.OrdinalIgnoreCase) ? "pinned" : "drift";
-                return new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = state, Version = version };
+                diagnostics.Add($"Project source changed during inspection: {relPath}.");
+                return unresolved;
             }
+            var references = xml.Descendants().Where(x => x.Name.LocalName == "PackageReference" &&
+                string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (references.Length == 0) return null;
+            if (references.Length > 1)
+            {
+                diagnostics.Add($"Ambiguous package references for {packageId} in {relPath}: found {references.Length} matching declarations.");
+                return unresolved;
+            }
+            var reference = references[0];
+            if (reference.AncestorsAndSelf().Any(x => x.Attribute("Condition") is not null))
+            {
+                diagnostics.Add($"Conditional package reference for {packageId} in {relPath} cannot be resolved without MSBuild evaluation.");
+                return unresolved;
+            }
+            var version = (string?)reference.Attribute("Version") ?? reference.Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
+            if (version is null)
+            {
+                var current = Path.GetDirectoryName(path)!;
+                while (IsWithin(root, current))
+                {
+                    var props = Path.Combine(current, "Directory.Packages.props");
+                    if (File.Exists(props))
+                    {
+                        var propsBefore = await File.ReadAllBytesAsync(props);
+                        var propsXml = await LoadXmlAsync(props);
+                        if (InspectSourceReadHook is not null) await InspectSourceReadHook(props);
+                        declarationPath = Relative(root, props); kind = "central";
+                        unresolved = new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
+                        var propsAfter = await File.ReadAllBytesAsync(props);
+                        if (!propsBefore.AsSpan().SequenceEqual(propsAfter))
+                        {
+                            diagnostics.Add($"Project source changed during inspection: {declarationPath}.");
+                            return unresolved;
+                        }
+                        var declarations = propsXml.Descendants().Where(x => x.Name.LocalName == "PackageVersion" &&
+                            string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+                        if (declarations.Length > 1 || declarations.Any(x => x.AncestorsAndSelf().Any(a => a.Attribute("Condition") is not null)))
+                        {
+                            diagnostics.Add($"Ambiguous or conditional central version for {packageId} in {declarationPath}.");
+                            return unresolved;
+                        }
+                        if (declarations.Length == 1)
+                            version = (string?)declarations[0].Attribute("Version") ?? declarations[0].Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
+                        break;
+                    }
+                    if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase)) break;
+                    current = Directory.GetParent(current)?.FullName ?? root;
+                }
+            }
+            if (version is null) return new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
+            var exact = NuGet.Versioning.NuGetVersion.TryParse(version, out var parsed) && parsed.ToNormalizedString() == version;
+            var state = version.Contains('$') || version.Contains('*') ? "dynamic" : !exact ? "unresolved" : string.Equals(version, pinnedVersion, StringComparison.OrdinalIgnoreCase) ? "pinned" : "drift";
+            return new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = state, Version = version };
         }
-        catch { }
-        return null;
+        catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException or CliException)
+        {
+            diagnostics.Add($"Cannot resolve consumer declaration for {packageId} in {declarationPath}: {ex.Message}");
+            return unresolved;
+        }
     }
 
     private static async Task<int> ReferencesAsync(string[] args)
@@ -774,9 +819,9 @@ internal static class ProjectWorkspace
         foreach (var part in relative.Split('/'))
         {
             current = Path.Combine(current, part);
-            if (File.Exists(current) || Directory.Exists(current))
-                try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new CliException($"Workspace path contains a reparse point: {relative}", 1); }
-                catch (FileNotFoundException) { }
+            try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new CliException($"Workspace path contains a reparse point: {relative}", 1); }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
         }
         return full;
     }

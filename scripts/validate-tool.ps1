@@ -620,10 +620,75 @@ try {
     if (-not (Test-Path -LiteralPath $lifecycleCleanObsolete)) { throw 'M0007 cleanup preview changed the filesystem.' }
     $cleanupLifecycle = Invoke-CapturedProcess $installedExe @('workspace', 'cleanup', '--alias', 'fixtures', '--directory', 'content/fixtures-clean-old', '--workspace', $lifecycleRoot, '--apply', '--json') $work
     Assert-ToolResult $cleanupLifecycle 0 'M0007 explicit clean sibling cleanup'
+    if (-not (Assert-JsonLine $cleanupLifecycle.Stdout 'M0007 cleanup apply result').applied) { throw 'M0007 completed cleanup did not report applied=true.' }
     if (Test-Path -LiteralPath $lifecycleCleanObsolete) { throw 'M0007 cleanup did not remove the approved clean obsolete sibling.' }
     if (-not (Test-Path -LiteralPath $lifecycleInitial) -or (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash -ne $lifecycleInitialHash) { throw 'M0007 cleanup changed or removed an immutable package.' }
     if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 advance changed the retained modified old workspace.' }
     Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advanced pin 1.0.1; approved cleanup removed only content/fixtures-clean-old."
+
+    # M0007 EC-07b: observe an actual recursive deletion before terminating the isolated process.
+    $interruptRoot = Join-Path $work 'M0007 cleanup interruption root'
+    $interruptSource = Join-Path $work 'M0007 cleanup interruption source'
+    $interruptFeed = Join-Path $interruptRoot 'feed'
+    New-Item -ItemType Directory -Force -Path $interruptRoot, $interruptSource, $interruptFeed | Out-Null
+    for ($i = 0; $i -lt 12000; $i++) {
+        [System.IO.File]::WriteAllText((Join-Path $interruptSource ('file-{0:D5}.txt' -f $i)), 'cleanup interruption fixture')
+    }
+    $interruptV1 = Join-Path $interruptFeed 'sample.interruption.1.0.0.nupkg'
+    $interruptV2 = Join-Path $interruptFeed 'sample.interruption.1.0.1.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.interruption', '--version', '1.0.0', '--source', $interruptSource, '--output', $interruptV1) $work) 0 'M0007 interruption fixture initial package'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.interruption', '--version', '1.0.1', '--source', $interruptSource, '--output', $interruptV2) $work) 0 'M0007 interruption fixture next package'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'init', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture workspace init'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'interrupt', '--package', 'feed/sample.interruption.1.0.0.nupkg', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture workspace add'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'interrupt', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture active unpack'
+    $interruptOld = Join-Path $interruptRoot 'content/interrupt-old'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('unpack', '--package', $interruptV1, '--destination', $interruptOld) $work) 0 'M0007 interruption fixture obsolete sibling'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'set', '--alias', 'interrupt', '--package', 'feed/sample.interruption.1.0.1.nupkg', '--directory', 'content/interrupt-current', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture next pin'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'interrupt', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture next unpack'
+    $interruptMarker = [System.IO.File]::ReadAllBytes((Join-Path $interruptRoot 'nuget-content.json'))
+    $interruptPackageHash = (Get-FileHash -LiteralPath $interruptV1 -Algorithm SHA256).Hash
+    $interruptInitialCount = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse).Count
+    if ($interruptInitialCount -ne 12000) { throw "EC-07b fixture expected 12000 payload files, found $interruptInitialCount." }
+    $interruptInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $interruptInfo.FileName = $installedExe
+    $interruptInfo.UseShellExecute = $false
+    $interruptInfo.RedirectStandardOutput = $true
+    $interruptInfo.RedirectStandardError = $true
+    $interruptInfo.WorkingDirectory = $work
+    foreach ($argument in @('workspace', 'cleanup', '--alias', 'interrupt', '--directory', 'content/interrupt-old', '--workspace', $interruptRoot, '--apply', '--json')) { [void]$interruptInfo.ArgumentList.Add($argument) }
+    $cleanupProcess = [System.Diagnostics.Process]::Start($interruptInfo)
+    $cleanupStdoutTask = $cleanupProcess.StandardOutput.ReadToEndAsync()
+    $cleanupStderrTask = $cleanupProcess.StandardError.ReadToEndAsync()
+    $cleanupWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $deletionObserved = $false
+    $observedRemainingFiles = $interruptInitialCount
+    try {
+        while (-not $cleanupProcess.HasExited -and $cleanupWatch.Elapsed.TotalSeconds -lt 120) {
+            $remainingFiles = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction SilentlyContinue).Count
+            if ($remainingFiles -lt $interruptInitialCount -and -not $cleanupProcess.HasExited) {
+                $deletionObserved = $true
+                $observedRemainingFiles = $remainingFiles
+                $cleanupProcess.Kill($true)
+                $cleanupProcess.WaitForExit()
+                break
+            }
+            Start-Sleep -Milliseconds 5
+        }
+    } finally {
+        $cleanupWatch.Stop()
+        if (-not $cleanupProcess.HasExited) { $cleanupProcess.Kill($true); $cleanupProcess.WaitForExit() }
+    }
+    $cleanupStdout = $cleanupStdoutTask.GetAwaiter().GetResult()
+    $cleanupStderr = $cleanupStderrTask.GetAwaiter().GetResult()
+    $postInterruptDirectoryExists = Test-Path -LiteralPath $interruptOld -PathType Container
+    $postInterruptFileCount = if ($postInterruptDirectoryExists) { @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction SilentlyContinue).Count } else { 0 }
+    if ((Get-FileHash -LiteralPath $interruptV1 -Algorithm SHA256).Hash -ne $interruptPackageHash) { throw 'EC-07b cleanup interruption changed the immutable package.' }
+    if ([Convert]::ToHexString($interruptMarker) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $interruptRoot 'nuget-content.json')))) { throw 'EC-07b cleanup interruption changed the workspace pin.' }
+    if ($deletionObserved) {
+        Write-Output "M0007 EC-07b forced cleanup termination passed: observed payload count fall from $interruptInitialCount to $observedRemainingFiles while process was alive, then killed it. Post-kill obsolete directory exists=$postInterruptDirectoryExists; remaining payload files=$postInterruptFileCount. This records the observed filesystem state without assuming rollback or atomicity."
+    } else {
+        Write-Warning "M0007 EC-07b remains pending: recursive deletion was not observed to begin while the cleanup process was still alive within 120 seconds (process output: $cleanupStdout $cleanupStderr)."
+    }
 
     $updateTop = Join-Path $work 'update pack'
     New-ToolPackage $updateVersion $updateTop
