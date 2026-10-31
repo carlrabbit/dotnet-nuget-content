@@ -105,6 +105,7 @@ internal static class ProjectWorkspace
     {
         if (args.Length == 0 || args[0] is "--help" or "-h") { Console.Out.WriteLine(Help); return 0; }
         var command = args[0];
+        if (command == "references") return await ReferencesAsync(args[1..]);
         var options = Parse(args[1..]);
         switch (command)
         {
@@ -209,7 +210,8 @@ internal static class ProjectWorkspace
 
     private static async Task<int> PackAsync(Dictionary<string, string> options)
     {
-        Ensure(options, "alias", "version", "output", "message", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
+        Ensure(options, "alias", "version", "major", "minor", "patch", "output", "message", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
+        var selection = PackageVersionSelection.FromOptions(options);
         var m = FindMember(manifest, Required(options, "alias")); var dir = ResolvePath(root, m.Directory);
         if (!Directory.Exists(dir)) throw new CliException($"Workspace member directory is missing: {m.Directory}", 1);
         var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(dir);
@@ -220,10 +222,10 @@ internal static class ProjectWorkspace
         else
         {
             // Legacy managed-pack output is the member directory's parent; keep it outside every member root.
-            var candidate = Path.Combine(Directory.GetParent(dir)?.FullName ?? root, $"{m.PackageId}.{Required(options, "version")}.nupkg");
+            var candidate = Path.Combine(Directory.GetParent(dir)?.FullName ?? root, $"{m.PackageId}.{selection.Resolve(m.Version).ToNormalizedString()}.nupkg");
             EnsurePackageOutputOutsideMembers(root, candidate, manifest.Members);
         }
-        var created = await ContentPackages.PackManagedAsync(dir, Required(options, "version"), output, options.GetValueOrDefault("message"));
+        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"));
         Console.WriteLine($"Created {created}"); Console.WriteLine($"Workspace pin remains {m.PackageId} {m.Version}; use 'workspace set --alias {m.Alias} --package <new-package>' to advance it."); return 0;
     }
 
@@ -275,6 +277,25 @@ internal static class ProjectWorkspace
             foreach (var d in output.Diagnostics) Console.Error.WriteLine($"diagnostic: {d}");
         }
         return output.Diagnostics.Count == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> ReferencesAsync(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "--help" or "-h") { Console.WriteLine("workspace references update --alias NAME [--version VERSION] [--workspace ROOT] [--apply] [--json]"); return 0; }
+        if (args[0] != "update") throw new CliException($"Unknown workspace references command '{args[0]}'.");
+        var options = Parse(args[1..]); Ensure(options, "alias", "version", "workspace", "apply", "json");
+        var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
+        var member = FindMember(manifest, Required(options, "alias"));
+        var plan = await ConsumerReferenceUpdater.CreatePlanAsync(root, member, manifest.Members, options.GetValueOrDefault("version"), options.ContainsKey("apply"));
+        if (options.ContainsKey("json")) Console.WriteLine(JsonSerializer.Serialize(plan, ReferenceUpdateJsonContext.Default.ReferenceUpdatePlan));
+        else
+        {
+            Console.WriteLine($"{member.PackageId} {plan.TargetVersion}: {(plan.Applied ? "applied" : "preview")}");
+            foreach (var change in plan.Changes) Console.WriteLine($"  {change.Classification}: {change.Path} {change.OldVersion} -> {change.NewVersion} ({change.SourceKind})");
+            foreach (var blocker in plan.Blockers) Console.Error.WriteLine($"blocker: {blocker.Path}: {blocker.Message}");
+            if (plan.PartialState is not null) Console.Error.WriteLine($"partial state: {plan.PartialState}");
+        }
+        return plan.CanApply ? 0 : 1;
     }
 
     private static async Task<WorkspaceUsageResult> DiscoverUsageAsync(string root, ProjectWorkspaceManifest manifest, List<ProjectWorkspaceMember> selected)
@@ -488,7 +509,7 @@ internal static class ProjectWorkspace
         return root;
     }
     private static string ResolveInput(string root, string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
-    private static string ResolvePath(string root, string relative)
+    internal static string ResolvePath(string root, string relative)
     {
         var full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
         if (!IsWithin(root, full)) throw new CliException($"Workspace path escapes project root: {relative}", 1);
@@ -543,7 +564,7 @@ internal static class ProjectWorkspace
         for (int i = 0; i < args.Length; i++)
         {
             if (!args[i].StartsWith("--", StringComparison.Ordinal)) throw new CliException($"Expected an option and value, got '{args[i]}'.");
-            var key = args[i][2..]; var value = key == "json" || key == "all" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal) ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'.");
+            var key = args[i][2..]; var value = key is "json" or "all" or "apply" or "major" or "minor" or "patch" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal) ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'.");
             if (!d.TryAdd(key, value)) throw new CliException($"Option '--{key}' was supplied more than once.");
         }
         return d;
@@ -559,11 +580,13 @@ internal static class ProjectWorkspace
           workspace list [--workspace ROOT] [--json]
           workspace unpack (--alias NAME | --all) [--workspace ROOT]
           workspace status [--alias NAME | --all] [--workspace ROOT] [--json]
-          workspace pack --alias NAME --version VERSION [--output FILE] [--message TEXT] [--workspace ROOT]
+          workspace pack --alias NAME (--version VERSION | --major | --minor | --patch) [--output FILE] [--message TEXT] [--workspace ROOT]
           workspace set --alias NAME --package FILE [--directory REL] [--workspace ROOT]
           workspace usage [--alias NAME | --all] [--workspace ROOT] [--json]
+          workspace references update --alias NAME [--version VERSION] [--workspace ROOT] [--apply] [--json]
 
         Workspace paths are local to the selected project root. Pin updates are explicit.
         Usage checks local project files and prior restore evidence without restoring.
+        Reference updates preview by default; pass --apply to write supported project declarations.
         """;
 }

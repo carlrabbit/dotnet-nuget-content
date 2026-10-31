@@ -111,3 +111,27 @@ pwsh -NoProfile -File scripts/validate-tool.ps1
 ```
 
 See [product specification](docs/SPECS.md), [engineering contract](docs/ENGINEERING.md), and [milestones](docs/MILESTONES.md).
+
+## Relative versions and consumer references
+
+For a managed workspace, choose a stable version increment from its baseline:
+
+```powershell
+dotnet-nuget-content pack --source ./working-copy --patch
+# or: --minor / --major
+
+dotnet-nuget-content workspace pack --alias fixtures --patch
+```
+
+`--version VERSION` remains available, and initial `pack --id ...` still requires an explicit version. Relative increments require a stable three-number baseline and never update the workspace marker or project pin.
+
+To synchronize local consuming projects, preview first:
+
+```powershell
+dotnet-nuget-content workspace references update --alias fixtures --json
+# use --version VERSION only when exactly one registered package is valid locally
+# pass --apply to make the supported XML edits
+dotnet-nuget-content workspace references update --alias fixtures --apply
+```
+
+The default target is the pinned version. Preview makes no changes. Apply updates supported literal direct `PackageReference` and effective central `PackageVersion` declarations, and blocks uncertain or malformed declarations. It does not restore packages or edit NuGet sources. Configure a local package source and restore/build consumers separately. The versioned result contract is documented in [M0006](docs/specs/M0006-versions-and-consumers.md) and [its JSON schema](docs/specs/M0006-reference-update.schema.json).
