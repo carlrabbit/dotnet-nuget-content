@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0007-workspace-cleanup.schema.json",
+  "title": "Workspace cleanup result",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "alias", "directory", "state", "applied"],
+  "properties": {
+    "schemaVersion": { "const": 1 }, "kind": { "const": "workspaceCleanup" },
+    "alias": { "type": "string" }, "directory": { "type": "string" },
+    "state": { "enum": ["eligible", "removed", "blocked", "partial"] },
+    "applied": { "type": "boolean", "description": "True only when the requested deletion completed; false for preview, blocked, or partial outcomes." },
+    "diagnostic": { "type": ["string", "null"] }
+  }
+}

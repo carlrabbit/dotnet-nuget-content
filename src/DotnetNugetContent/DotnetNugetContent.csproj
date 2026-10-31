@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <PackageReference Include="NuGet.Packaging" Version="7.9.0" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.2" />
     <InternalsVisibleTo Include="DotnetNugetContent.Tests" />
   </ItemGroup>
 

@@ -567,6 +567,146 @@ try {
     if ($pinList.members[0].alias -ne 'alpha' -or $pinList.members[0].version -ne '1.0.1' -or $pinList.members[1].alias -ne 'beta' -or $pinList.members[1].version -ne '2.0.0') { throw 'M0006 lifecycle changed an unrelated package pin.' }
     Write-Output "M0006 installed reference workflow passed. alpha initial SHA-256: $alphaInitialHash; beta snapshot SHA-256: $betaInitialHash; independent output oracle: $((Get-FileHash -LiteralPath (Join-Path $oracle 'nested/payload.bin') -Algorithm SHA256).Hash)"
 
+    # M0007: advance, inspect consumer drift, and explicitly clean one clean obsolete sibling.
+    $lifecycleRoot = Join-Path $work 'M0007 lifecycle root'
+    $lifecycleFeed = Join-Path $lifecycleRoot 'feed'
+    $lifecycleSource = Join-Path $work 'M0007 independent source'
+    New-Item -ItemType Directory -Force -Path $lifecycleRoot, $lifecycleFeed, $lifecycleSource | Out-Null
+    $lifecycleOriginal = [byte[]](0, 255, 1, 128, 42, 13, 10)
+    $lifecycleUpdated = [byte[]](9, 8, 7, 0, 255, 64)
+    [System.IO.File]::WriteAllBytes((Join-Path $lifecycleSource 'payload.bin'), $lifecycleOriginal)
+    $lifecycleOracle = Join-Path $work 'M0007 consumer source oracle.bin'
+    [System.IO.File]::WriteAllBytes($lifecycleOracle, $lifecycleOriginal)
+    $lifecycleInitial = Join-Path $lifecycleFeed 'sample.lifecycle.1.0.0.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.lifecycle', '--version', '1.0.0', '--source', $lifecycleSource, '--output', $lifecycleInitial) $work) 0 'M0007 initial lifecycle package'
+    $lifecycleInitialHash = (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'init', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace init'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'fixtures', '--package', 'feed/sample.lifecycle.1.0.0.nupkg', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace add'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace unpack'
+    $lifecycleOldCopy = Join-Path $lifecycleRoot 'content/fixtures'
+    $lifecycleCleanObsolete = Join-Path $lifecycleRoot 'content/fixtures-clean-old'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('unpack', '--package', $lifecycleInitial, '--destination', $lifecycleCleanObsolete) $work) 0 'M0007 clean obsolete sibling fixture'
+    [System.IO.File]::WriteAllBytes((Join-Path $lifecycleOldCopy 'payload.bin'), $lifecycleUpdated)
+    $lifecycleOldWorkHash = (Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash
+    $lifecycleConsumer = Join-Path $lifecycleRoot 'consumer/Consumer.csproj'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecycleConsumer) | Out-Null
+    @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="sample.lifecycle" Version="1.0.0" /></ItemGroup>
+</Project>
+'@ | Set-Content -LiteralPath $lifecycleConsumer -Encoding utf8
+    Set-Content -LiteralPath (Join-Path (Split-Path -Parent $lifecycleConsumer) 'Program.cs') -Value 'System.Console.WriteLine("lifecycle consumer");' -Encoding utf8
+    $lifecycleNext = Join-Path $lifecycleFeed 'sample.lifecycle.1.0.1.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'advance', '--alias', 'fixtures', '--patch', '--output', 'feed/sample.lifecycle.1.0.1.nupkg', '--workspace', $lifecycleRoot) $work) 0 'M0007 coordinated advance'
+    if (-not (Test-Path -LiteralPath $lifecycleNext)) { throw 'M0007 advance did not publish the requested immutable package.' }
+    $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $lifecycleInspect 0 'M0007 inspect after advance'
+    $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 inspection result'
+    if ($lifecycleInspection.members[0].state -ne 'clean' -or $lifecycleInspection.members[0].version -ne '1.0.1') { throw 'M0007 inspect did not report the clean advanced pin.' }
+    if (-not @($lifecycleInspection.members[0].consumers | Where-Object { $_.path -eq 'consumer/Consumer.csproj' -and $_.kind -eq 'direct' -and $_.state -eq 'drift' -and $_.version -eq '1.0.0' }).Count) { throw 'M0007 inspect missed direct consumer version drift.' }
+    if (-not @($lifecycleInspection.members[0].candidates | Where-Object { $_.directory -eq 'content/fixtures-clean-old' -and $_.state -eq 'clean' }).Count) { throw 'M0007 inspect did not identify the clean older sibling candidate.' }
+    $lifecycleConfig = Join-Path $work 'M0007 lifecycle NuGet.Config'
+    $escapedLifecycleFeed = [System.Security.SecurityElement]::Escape($lifecycleFeed)
+    Set-Content -LiteralPath $lifecycleConfig -Encoding utf8 -Value "<configuration><packageSources><clear/><add key=`"local-lifecycle`" value=`"$escapedLifecycleFeed`" /></packageSources></configuration>"
+    Invoke-Checked 'dotnet' @('restore', $lifecycleConsumer, '--configfile', $lifecycleConfig) $work | Out-Null
+    Invoke-Checked 'dotnet' @('build', $lifecycleConsumer, '--configuration', 'Release', '--no-restore') (Split-Path -Parent $lifecycleConsumer) | Out-Null
+    $lifecycleOutput = Join-Path (Split-Path -Parent $lifecycleConsumer) 'bin/Release/net11.0/payload.bin'
+    if (-not (Test-Path -LiteralPath $lifecycleOutput) -or (Get-FileHash -LiteralPath $lifecycleOutput -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $lifecycleOracle -Algorithm SHA256).Hash) { throw 'M0007 consumer bytes differ from the independently prepared original source.' }
+    if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $lifecycleConsumer) 'bin/Release/net11.0/.nuget-content')) { throw 'M0007 manifest metadata leaked into consumer output.' }
+    $previewLifecycle = Invoke-CapturedProcess $installedExe @('workspace', 'cleanup', '--alias', 'fixtures', '--directory', 'content/fixtures-clean-old', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $previewLifecycle 0 'M0007 cleanup preview'
+    if ((Assert-JsonLine $previewLifecycle.Stdout 'M0007 cleanup preview result').state -ne 'eligible') { throw 'M0007 cleanup preview did not report the clean sibling eligible.' }
+    if (-not (Test-Path -LiteralPath $lifecycleCleanObsolete)) { throw 'M0007 cleanup preview changed the filesystem.' }
+    $cleanupLifecycle = Invoke-CapturedProcess $installedExe @('workspace', 'cleanup', '--alias', 'fixtures', '--directory', 'content/fixtures-clean-old', '--workspace', $lifecycleRoot, '--apply', '--json') $work
+    Assert-ToolResult $cleanupLifecycle 0 'M0007 explicit clean sibling cleanup'
+    if (-not (Assert-JsonLine $cleanupLifecycle.Stdout 'M0007 cleanup apply result').applied) { throw 'M0007 completed cleanup did not report applied=true.' }
+    if (Test-Path -LiteralPath $lifecycleCleanObsolete) { throw 'M0007 cleanup did not remove the approved clean obsolete sibling.' }
+    if (-not (Test-Path -LiteralPath $lifecycleInitial) -or (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash -ne $lifecycleInitialHash) { throw 'M0007 cleanup changed or removed an immutable package.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 advance changed the retained modified old workspace.' }
+    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advanced pin 1.0.1; approved cleanup removed only content/fixtures-clean-old."
+
+    # M0007 EC-07b: observe an actual recursive deletion before terminating the isolated process.
+    $interruptRoot = Join-Path $work 'M0007 cleanup interruption root'
+    $interruptSource = Join-Path $work 'M0007 cleanup interruption source'
+    $interruptFeed = Join-Path $interruptRoot 'feed'
+    New-Item -ItemType Directory -Force -Path $interruptRoot, $interruptSource, $interruptFeed | Out-Null
+    for ($i = 0; $i -lt 12000; $i++) {
+        [System.IO.File]::WriteAllText((Join-Path $interruptSource ('file-{0:D5}.txt' -f $i)), 'cleanup interruption fixture')
+    }
+    $interruptV1 = Join-Path $interruptFeed 'sample.interruption.1.0.0.nupkg'
+    $interruptV2 = Join-Path $interruptFeed 'sample.interruption.1.0.1.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.interruption', '--version', '1.0.0', '--source', $interruptSource, '--output', $interruptV1) $work) 0 'M0007 interruption fixture initial package'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.interruption', '--version', '1.0.1', '--source', $interruptSource, '--output', $interruptV2) $work) 0 'M0007 interruption fixture next package'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'init', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture workspace init'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'interrupt', '--package', 'feed/sample.interruption.1.0.0.nupkg', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture workspace add'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'interrupt', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture active unpack'
+    $interruptOld = Join-Path $interruptRoot 'content/interrupt-old'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('unpack', '--package', $interruptV1, '--destination', $interruptOld) $work) 0 'M0007 interruption fixture obsolete sibling'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'set', '--alias', 'interrupt', '--package', 'feed/sample.interruption.1.0.1.nupkg', '--directory', 'content/interrupt-current', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture next pin'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'interrupt', '--workspace', $interruptRoot) $work) 0 'M0007 interruption fixture next unpack'
+    $interruptMarker = [System.IO.File]::ReadAllBytes((Join-Path $interruptRoot 'nuget-content.json'))
+    $interruptPackageHash = (Get-FileHash -LiteralPath $interruptV1 -Algorithm SHA256).Hash
+    $interruptInitialCount = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse).Count
+    if ($interruptInitialCount -ne 12000) { throw "EC-07b fixture expected 12000 payload files, found $interruptInitialCount." }
+    $interruptInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $interruptInfo.FileName = $installedExe
+    $interruptInfo.UseShellExecute = $false
+    $interruptInfo.RedirectStandardOutput = $true
+    $interruptInfo.RedirectStandardError = $true
+    $interruptInfo.WorkingDirectory = $work
+    foreach ($argument in @('workspace', 'cleanup', '--alias', 'interrupt', '--directory', 'content/interrupt-old', '--workspace', $interruptRoot, '--apply', '--json')) { [void]$interruptInfo.ArgumentList.Add($argument) }
+    $cleanupProcess = [System.Diagnostics.Process]::Start($interruptInfo)
+    $cleanupStdoutTask = $cleanupProcess.StandardOutput.ReadToEndAsync()
+    $cleanupStderrTask = $cleanupProcess.StandardError.ReadToEndAsync()
+    $cleanupWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $deletionObserved = $false
+    $terminationCompleted = $false
+    $observedRemainingFiles = $interruptInitialCount
+    $lastObservedFileCount = $interruptInitialCount
+    $observationFailure = $null
+    try {
+        while (-not $cleanupProcess.HasExited -and $cleanupWatch.Elapsed.TotalSeconds -lt 120) {
+            if (-not (Test-Path -LiteralPath $interruptOld -PathType Container)) { throw 'Obsolete directory disappeared before an in-progress deletion could be observed.' }
+            $remainingFiles = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction Stop).Count
+            $lastObservedFileCount = $remainingFiles
+            if ($remainingFiles -lt $interruptInitialCount -and -not $cleanupProcess.HasExited) {
+                $deletionObserved = $true
+                $observedRemainingFiles = $remainingFiles
+                $cleanupProcess.Kill($true)
+                $cleanupProcess.WaitForExit()
+                if (-not $cleanupProcess.HasExited) { throw 'Cleanup process remained alive after the termination request.' }
+                $terminationCompleted = $true
+                break
+            }
+            Start-Sleep -Milliseconds 5
+        }
+        if (-not $deletionObserved) {
+            if ($cleanupProcess.HasExited) {
+                $observationFailure = "cleanup process exited before deletion was observed (exit code $($cleanupProcess.ExitCode))"
+            } else {
+                $observationFailure = 'cleanup process exceeded the 120-second observation timeout before deletion was observed'
+            }
+        }
+    } catch {
+        $observationFailure = "unexpected interruption-probe failure: $($_.Exception.Message)"
+    } finally {
+        $cleanupWatch.Stop()
+        if (-not $cleanupProcess.HasExited) { $cleanupProcess.Kill($true); $cleanupProcess.WaitForExit() }
+    }
+    $cleanupStdout = $cleanupStdoutTask.GetAwaiter().GetResult()
+    $cleanupStderr = $cleanupStderrTask.GetAwaiter().GetResult()
+    $postInterruptDirectoryExists = Test-Path -LiteralPath $interruptOld -PathType Container
+    $postInterruptFileCount = if ($postInterruptDirectoryExists) { @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction SilentlyContinue).Count } else { 0 }
+    if ((Get-FileHash -LiteralPath $interruptV1 -Algorithm SHA256).Hash -ne $interruptPackageHash) { throw 'EC-07b cleanup interruption changed the immutable package.' }
+    if ([Convert]::ToHexString($interruptMarker) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $interruptRoot 'nuget-content.json')))) { throw 'EC-07b cleanup interruption changed the workspace pin.' }
+    if ($deletionObserved -and $terminationCompleted) {
+        Write-Output "M0007 EC-07b forced cleanup termination passed: observed payload count fall from $interruptInitialCount to $observedRemainingFiles while process was alive, then killed it. Post-kill obsolete directory exists=$postInterruptDirectoryExists; remaining payload files=$postInterruptFileCount. This records the observed filesystem state without assuming rollback or atomicity."
+    } else {
+        if (-not $observationFailure) { $observationFailure = 'deletion was observed but controlled process termination did not complete' }
+        throw "EC-07b validation failed: $observationFailure; deletion observed=$deletionObserved; controlled termination completed=$terminationCompleted; elapsed=$($cleanupWatch.Elapsed.TotalSeconds.ToString('F1'))s; last observed payload count=$lastObservedFileCount/$interruptInitialCount; post-termination directory exists=$postInterruptDirectoryExists; remaining payload files=$postInterruptFileCount; cleanup stdout=[$cleanupStdout]; cleanup stderr=[$cleanupStderr]."
+    }
+
     $updateTop = Join-Path $work 'update pack'
     New-ToolPackage $updateVersion $updateTop
     Copy-Item -LiteralPath (Join-Path $updateTop "top-level/$packageId.$updateVersion.nupkg") -Destination $feed

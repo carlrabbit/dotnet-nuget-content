@@ -1,6 +1,8 @@
-# M0006 handoff
+# M0007 planning handoff
 
-Project: `carlrabbit/dotnet-nuget-content`
-Guide: current `carlrabbit/agentic-project-guides` plan-milestone workflow, repository base + CLI-tool.
+Primary ready milestone: `docs/milestones/M0007-workspace-lifecycle.md`.
+Normative product contract: `docs/specs/M0007-workspace-lifecycle.md`.
+Planner-seeded pending ledger: `.execution/M0007-workspace-lifecycle.md`.
+Transport-only implementation prompt: `IMPLEMENTER-PROMPT.md`.
 
-Apply all relative files from ZIP on a new branch from current main. Specification and milestone are authoritative; ledger is pending-only. Implementer owns concrete work packages and evidence. Scale qualification deferred to 2.0 release.
+This is a ZIP of *new* repository-relative authority and ledger files. Extract into a new implementation branch from current main; apply docs updates required by the milestone. No guide files, research scratch, pre-completed evidence or implementation code are included.

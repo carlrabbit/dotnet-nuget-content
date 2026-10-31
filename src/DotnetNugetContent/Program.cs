@@ -103,7 +103,7 @@ internal static class Cli
 
         Project workspaces:
           dotnet-nuget-content workspace --help
-          dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage|references
+          dotnet-nuget-content workspace init|add|list|unpack|status|pack|advance|set|usage|inspect|cleanup|references
         """;
 }
 
