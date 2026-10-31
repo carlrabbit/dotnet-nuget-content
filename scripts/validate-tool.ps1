@@ -661,19 +661,35 @@ try {
     $cleanupStderrTask = $cleanupProcess.StandardError.ReadToEndAsync()
     $cleanupWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $deletionObserved = $false
+    $terminationCompleted = $false
     $observedRemainingFiles = $interruptInitialCount
+    $lastObservedFileCount = $interruptInitialCount
+    $observationFailure = $null
     try {
         while (-not $cleanupProcess.HasExited -and $cleanupWatch.Elapsed.TotalSeconds -lt 120) {
-            $remainingFiles = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction SilentlyContinue).Count
+            if (-not (Test-Path -LiteralPath $interruptOld -PathType Container)) { throw 'Obsolete directory disappeared before an in-progress deletion could be observed.' }
+            $remainingFiles = @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction Stop).Count
+            $lastObservedFileCount = $remainingFiles
             if ($remainingFiles -lt $interruptInitialCount -and -not $cleanupProcess.HasExited) {
                 $deletionObserved = $true
                 $observedRemainingFiles = $remainingFiles
                 $cleanupProcess.Kill($true)
                 $cleanupProcess.WaitForExit()
+                if (-not $cleanupProcess.HasExited) { throw 'Cleanup process remained alive after the termination request.' }
+                $terminationCompleted = $true
                 break
             }
             Start-Sleep -Milliseconds 5
         }
+        if (-not $deletionObserved) {
+            if ($cleanupProcess.HasExited) {
+                $observationFailure = "cleanup process exited before deletion was observed (exit code $($cleanupProcess.ExitCode))"
+            } else {
+                $observationFailure = 'cleanup process exceeded the 120-second observation timeout before deletion was observed'
+            }
+        }
+    } catch {
+        $observationFailure = "unexpected interruption-probe failure: $($_.Exception.Message)"
     } finally {
         $cleanupWatch.Stop()
         if (-not $cleanupProcess.HasExited) { $cleanupProcess.Kill($true); $cleanupProcess.WaitForExit() }
@@ -684,10 +700,11 @@ try {
     $postInterruptFileCount = if ($postInterruptDirectoryExists) { @(Get-ChildItem -LiteralPath $interruptOld -Filter 'file-*.txt' -File -Recurse -ErrorAction SilentlyContinue).Count } else { 0 }
     if ((Get-FileHash -LiteralPath $interruptV1 -Algorithm SHA256).Hash -ne $interruptPackageHash) { throw 'EC-07b cleanup interruption changed the immutable package.' }
     if ([Convert]::ToHexString($interruptMarker) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $interruptRoot 'nuget-content.json')))) { throw 'EC-07b cleanup interruption changed the workspace pin.' }
-    if ($deletionObserved) {
+    if ($deletionObserved -and $terminationCompleted) {
         Write-Output "M0007 EC-07b forced cleanup termination passed: observed payload count fall from $interruptInitialCount to $observedRemainingFiles while process was alive, then killed it. Post-kill obsolete directory exists=$postInterruptDirectoryExists; remaining payload files=$postInterruptFileCount. This records the observed filesystem state without assuming rollback or atomicity."
     } else {
-        Write-Warning "M0007 EC-07b remains pending: recursive deletion was not observed to begin while the cleanup process was still alive within 120 seconds (process output: $cleanupStdout $cleanupStderr)."
+        if (-not $observationFailure) { $observationFailure = 'deletion was observed but controlled process termination did not complete' }
+        throw "EC-07b validation failed: $observationFailure; deletion observed=$deletionObserved; controlled termination completed=$terminationCompleted; elapsed=$($cleanupWatch.Elapsed.TotalSeconds.ToString('F1'))s; last observed payload count=$lastObservedFileCount/$interruptInitialCount; post-termination directory exists=$postInterruptDirectoryExists; remaining payload files=$postInterruptFileCount; cleanup stdout=[$cleanupStdout]; cleanup stderr=[$cleanupStderr]."
     }
 
     $updateTop = Join-Path $work 'update pack'
