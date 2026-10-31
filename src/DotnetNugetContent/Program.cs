@@ -23,10 +23,15 @@ internal static class Cli
             switch (args[0])
             {
                 case "pack":
-                    EnsureOptions(options, "id", "version", "source", "output", "message");
+                    EnsureOptions(options, "id", "version", "major", "minor", "patch", "source", "output", "message");
                     var managed = !options.ContainsKey("id");
-                    if (!managed) { await ContentPackages.PackInitialAsync(Required(options, "id"), Required(options, "version"), Required(options, "source"), Required(options, "output")); Console.Out.WriteLine($"Created {Path.GetFullPath(options["output"])}"); }
-                    else { var output = await ContentPackages.PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, Required(options, "version"), options.GetValueOrDefault("output"), options.GetValueOrDefault("message")); Console.Out.WriteLine($"Created {output}"); }
+                    var selection = PackageVersionSelection.FromOptions(options);
+                    if (!managed)
+                    {
+                        if (selection.ExplicitVersion is null) throw new CliException("Initial package creation requires --version.");
+                        await ContentPackages.PackInitialAsync(Required(options, "id"), selection.ExplicitVersion, Required(options, "source"), Required(options, "output")); Console.Out.WriteLine($"Created {Path.GetFullPath(options["output"])}");
+                    }
+                    else { var output = await ContentPackages.PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, selection, options.GetValueOrDefault("output"), options.GetValueOrDefault("message")); Console.Out.WriteLine($"Created {output}"); }
                     return 0;
                 case "unpack":
                     EnsureOptions(options, "package", "destination", "sha256");
@@ -65,7 +70,7 @@ internal static class Cli
         catch (CliException ex) { Console.Error.WriteLine($"error: {ex.Message}"); return ex.ExitCode; }
         catch (Exception ex) { Console.Error.WriteLine($"error: {ex.Message}"); return 1; }
     }
-    private static Dictionary<string, string> ParseOptions(string[] args) { var d = new Dictionary<string, string>(StringComparer.Ordinal); for (int i = 0; i < args.Length; i++) { if (!args[i].StartsWith("--")) throw new CliException($"Expected an option and value, got '{args[i]}'."); var key = args[i][2..]; var value = key == "json" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'."); if (!d.TryAdd(key, value)) throw new CliException($"Option '{args[i]}' was supplied more than once."); } return d; }
+    private static Dictionary<string, string> ParseOptions(string[] args) { var d = new Dictionary<string, string>(StringComparer.Ordinal); for (int i = 0; i < args.Length; i++) { if (!args[i].StartsWith("--")) throw new CliException($"Expected an option and value, got '{args[i]}'."); var key = args[i][2..]; var value = key is "json" or "major" or "minor" or "patch" or "apply" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'."); if (!d.TryAdd(key, value)) throw new CliException($"Option '{args[i]}' was supplied more than once."); } return d; }
     private static string Required(Dictionary<string, string> d, string k) => d.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v) ? v : throw new CliException($"Missing required option '--{k}'.");
     private static void EnsureOptions(Dictionary<string, string> d, params string[] allowed) { var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal)); if (bad is not null) throw new CliException($"Unknown option '--{bad}'."); }
     private static void EnsureExclusive(Dictionary<string, string> d, string first, string second) { if (d.ContainsKey(first) && d.ContainsKey(second)) throw new CliException($"Options '--{first}' and '--{second}' cannot be used together."); }
@@ -76,7 +81,7 @@ internal static class Cli
           dotnet-nuget-content --help
           dotnet-nuget-content --version
           dotnet-nuget-content pack --id <id> --version <version> --source <dir> --output <file.nupkg>
-          dotnet-nuget-content pack --version <version> [--source <workspace>] [--output <file.nupkg>] [--message <text>]
+          dotnet-nuget-content pack (--version <version> | --major | --minor | --patch) [--source <workspace>] [--output <file.nupkg>] [--message <text>]
           dotnet-nuget-content unpack --package <file.nupkg> --destination <dir> [--sha256 <hash>]
           dotnet-nuget-content status [--source <workspace> | --package <file.nupkg>] [--json]
           dotnet-nuget-content history [--source <workspace> | --package <file.nupkg>] [--json]
@@ -84,12 +89,13 @@ internal static class Cli
 
         Workflow:
           First package: pack --id ... --version ... --source ... --output ...
-          Update: unpack, edit workspace files, status, pack --version ...
+          Update: unpack, edit workspace files, status, pack --patch (or --major/--minor)
           Inspect: status and history; add --json for structured output.
 
-        Managed status, history and pack use the current directory by default; they
+          Managed status, history and pack use the current directory by default; they
         never search parent directories. Managed pack needs changes and a higher
-        version. Without --output it writes beside the workspace, leaving its baseline
+        version. Relative --major/--minor/--patch use the stable baseline version.
+        Without --output it writes beside the workspace, leaving its baseline
         unchanged. Existing output files and extraction destinations are not replaced.
 
         Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
@@ -97,7 +103,7 @@ internal static class Cli
 
         Project workspaces:
           dotnet-nuget-content workspace --help
-          dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage
+          dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage|references
         """;
 }
 
@@ -141,8 +147,11 @@ internal static class ContentPackages
         await CreatePackageAsync(manifest, source, outputPath);
     }
     public static async Task<string> PackManagedAsync(string sourcePath, string versionText, string? outputPath, string? message)
+        => await PackManagedAsync(sourcePath, new PackageVersionSelection(versionText, null), outputPath, message);
+
+    public static async Task<string> PackManagedAsync(string sourcePath, PackageVersionSelection versionSelection, string? outputPath, string? message)
     {
-        var root = ResolveWorkspace(sourcePath); var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath)); var version = ParseVersion(versionText);
+        var root = ResolveWorkspace(sourcePath); var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath)); var version = versionSelection.Resolve(baseline.Package.Version);
         if (version <= ParseVersion(baseline.Package.Version)) throw new CliException("New version must be greater than the managed workspace baseline version.", 1);
         if (message is not null && string.IsNullOrWhiteSpace(message)) throw new CliException("--message must contain non-whitespace text.");
         RejectReparsePoints(root); var files = await InventoryAsync(root); if (files.Count == 0) throw new CliException("Workspace must contain at least one content file.", 1);
@@ -438,7 +447,7 @@ internal static class ContentPackages
         catch (Exception e) when (e is JsonException or IOException) { throw new CliException($"Invalid managed workspace marker '{path}': {e.Message}", 1); }
     }
     private static string ResolveWorkspace(string root) { var p = Path.GetFullPath(root); if (!Directory.Exists(p)) throw new CliException($"Workspace directory not found: {p}", 1); RejectReparsePoints(p); return p; }
-    private static NuGetVersion ParseVersion(string s) => s.Contains('*') || !NuGetVersion.TryParse(s, out var v) ? throw new CliException($"Invalid exact NuGet version '{s}'.") : v;
+    internal static NuGetVersion ParseVersion(string s) => s.Contains('*') || !NuGetVersion.TryParse(s, out var v) ? throw new CliException($"Invalid exact NuGet version '{s}'.") : v;
     private static void ValidateIdentity(string id) { if (!IdPattern.IsMatch(id)) throw new CliException($"Invalid NuGet package ID '{id}'."); }
     private static string SafeTarget(string root, string rel) { var target = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar))); if (!target.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new CliException($"Unsafe content path '{rel}'.", 1); return target; }
     private static void RejectReparsePoints(string root) { foreach (var e in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories).Prepend(root)) if ((File.GetAttributes(e) & FileAttributes.ReparsePoint) != 0) throw new CliException($"Symbolic links and reparse points are not allowed: {e}", 1); }

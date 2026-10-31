@@ -57,7 +57,7 @@ function Invoke-Checked([string] $FilePath, [string[]] $Arguments, [string] $Wor
     $result = Invoke-CapturedProcess $FilePath $Arguments $WorkingDirectory
     if ($result.Stdout) { Write-Output $result.Stdout.TrimEnd() }
     if ($result.Stderr) { [Console]::Error.WriteLine($result.Stderr.TrimEnd()) }
-    if ($result.ExitCode -ne 0) { throw "$FilePath $($Arguments -join ' ') failed with exit code $($result.ExitCode)." }
+    if ($result.ExitCode -ne 0) { throw "$FilePath $($Arguments -join ' ') failed with exit code $($result.ExitCode). stdout=[$($result.Stdout)] stderr=[$($result.Stderr)]" }
     return $result
 }
 
@@ -477,6 +477,95 @@ try {
     Assert-ToolResult $badUnpack 1 'Malformed package extraction cleanup'
     if (Test-Path -LiteralPath $failedDestination) { throw 'Malformed package left a partial extraction destination.' }
     if (@(Get-ChildItem -LiteralPath $work -Directory -Filter '.failed extraction.*.tmp').Count -ne 0) { throw 'Handled malformed-package failure left an extraction staging directory.' }
+
+    # M0006: relative versioning, explicit pin transition, preview/apply, and real consumers.
+    $projectRoot = Join-Path $work 'M0006 project root'
+    $contentFeed = Join-Path $projectRoot 'feed'
+    $alphaSource = Join-Path $work 'M0006 alpha source'
+    $betaSource = Join-Path $work 'M0006 beta source'
+    New-Item -ItemType Directory -Force -Path $projectRoot, $contentFeed, (Join-Path $alphaSource 'nested'), (Join-Path $betaSource 'nested') | Out-Null
+    $alphaOriginal = [byte[]](0, 1, 2, 255, 128, 13, 10, 42)
+    $alphaNext = [byte[]](9, 8, 7, 0, 255, 64, 13, 10)
+    $betaOriginal = [System.Text.Encoding]::UTF8.GetBytes("beta stays pinned`r`n")
+    [System.IO.File]::WriteAllBytes((Join-Path $alphaSource 'nested/payload.bin'), $alphaOriginal)
+    [System.IO.File]::WriteAllBytes((Join-Path $betaSource 'nested/payload.txt'), $betaOriginal)
+    $alphaInitial = Join-Path $contentFeed 'sample.alpha.1.0.0.nupkg'
+    $betaInitial = Join-Path $contentFeed 'sample.beta.2.0.0.nupkg'
+    foreach ($result in @(
+        (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.alpha', '--version', '1.0.0', '--source', $alphaSource, '--output', $alphaInitial) $work),
+        (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.beta', '--version', '2.0.0', '--source', $betaSource, '--output', $betaInitial) $work)
+    )) { Assert-ToolResult $result 0 'M0006 initial content package creation' }
+    $alphaInitialHash = (Get-FileHash -LiteralPath $alphaInitial -Algorithm SHA256).Hash
+    $betaInitialHash = (Get-FileHash -LiteralPath $betaInitial -Algorithm SHA256).Hash
+    $workspaceInit = Invoke-CapturedProcess $installedExe @('workspace', 'init', '--workspace', $projectRoot) $work
+    Assert-ToolResult $workspaceInit 0 'M0006 workspace init'
+    $alphaAdd = Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'alpha', '--package', 'feed/sample.alpha.1.0.0.nupkg', '--workspace', $projectRoot) $work
+    Assert-ToolResult $alphaAdd 0 'M0006 alpha workspace add'
+    $betaAdd = Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'beta', '--package', 'feed/sample.beta.2.0.0.nupkg', '--workspace', $projectRoot) $work
+    Assert-ToolResult $betaAdd 0 'M0006 beta workspace add'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--all', '--workspace', $projectRoot) $work) 0 'M0006 workspace unpack'
+    $oldAlphaWork = Join-Path $projectRoot 'content/alpha/nested/payload.bin'
+    [System.IO.File]::WriteAllBytes($oldAlphaWork, $alphaNext)
+    $oracle = Join-Path $work 'M0006 independent expected source'
+    New-Item -ItemType Directory -Force -Path (Join-Path $oracle 'nested') | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $oracle 'nested/payload.bin'), $alphaNext)
+    $alphaMarkerBeforePack = [System.IO.File]::ReadAllBytes((Join-Path $projectRoot 'nuget-content.json'))
+    $relativePack = Invoke-CapturedProcess $installedExe @('workspace', 'pack', '--alias', 'alpha', '--patch', '--workspace', $projectRoot) $work
+    Assert-ToolResult $relativePack 0 'M0006 workspace relative patch pack'
+    $alphaNextPackage = Join-Path $projectRoot 'content/sample.alpha.1.0.1.nupkg'
+    if (-not (Test-Path -LiteralPath $alphaNextPackage -PathType Leaf)) { throw 'M0006 relative pack did not produce its normalized 1.0.1 artifact.' }
+    Copy-Item -LiteralPath $alphaNextPackage -Destination $contentFeed
+    if ([Convert]::ToHexString($alphaMarkerBeforePack) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $projectRoot 'nuget-content.json')))) { throw 'M0006 workspace pack changed the root pin.' }
+    $alphaOldBytes = [System.IO.File]::ReadAllBytes($oldAlphaWork)
+    $setPin = Invoke-CapturedProcess $installedExe @('workspace', 'set', '--alias', 'alpha', '--package', 'content/sample.alpha.1.0.1.nupkg', '--directory', 'content/alpha-1.0.1', '--workspace', $projectRoot) $work
+    Assert-ToolResult $setPin 0 'M0006 explicit safe pin transition'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'alpha', '--workspace', $projectRoot) $work) 0 'M0006 unpack advanced pin'
+    $propsPath = Join-Path $projectRoot 'Directory.Packages.props'
+    [System.IO.File]::WriteAllText($propsPath, '<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup><ItemGroup><PackageVersion Include="sample.alpha" Version="1.0.0" /><PackageVersion Include="sample.beta" Version="2.0.0" /></ItemGroup></Project>')
+    $consumerA = Join-Path $projectRoot 'consumers/central/Consumer.csproj'
+    $consumerB = Join-Path $projectRoot 'consumers/direct/Consumer.csproj'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $consumerA), (Split-Path -Parent $consumerB) | Out-Null
+    @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="sample.alpha" /><PackageReference Include="sample.beta" /></ItemGroup>
+</Project>
+'@ | Set-Content -LiteralPath $consumerA -Encoding utf8
+    @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally></PropertyGroup>
+  <ItemGroup><PackageReference Include="sample.alpha" Version="1.0.0" /><PackageReference Include="sample.beta" Version="2.0.0" /></ItemGroup>
+</Project>
+'@ | Set-Content -LiteralPath $consumerB -Encoding utf8
+    Set-Content -LiteralPath (Join-Path (Split-Path -Parent $consumerA) 'Program.cs') -Value 'System.Console.WriteLine("central consumer");' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path (Split-Path -Parent $consumerB) 'Program.cs') -Value 'System.Console.WriteLine("direct consumer");' -Encoding utf8
+    $preview = Invoke-CapturedProcess $installedExe @('workspace', 'references', 'update', '--alias', 'alpha', '--workspace', $projectRoot, '--json') $work
+    Assert-ToolResult $preview 0 'M0006 reference preview'
+    $previewPlan = Assert-JsonLine $preview.Stdout 'M0006 preview plan'
+    if ($previewPlan.targetVersion -ne '1.0.1' -or -not $previewPlan.canApply -or $previewPlan.changes.Count -ne 2) { throw 'M0006 preview did not target the pinned version and both supported declarations.' }
+    if ((Get-Content -Raw $propsPath) -notmatch 'sample.alpha" Version="1\.0\.0') { throw 'M0006 preview changed central version XML.' }
+    $apply = Invoke-CapturedProcess $installedExe @('workspace', 'references', 'update', '--alias', 'alpha', '--workspace', $projectRoot, '--apply', '--json') $work
+    Assert-ToolResult $apply 0 'M0006 reference apply'
+    $applyPlan = Assert-JsonLine $apply.Stdout 'M0006 applied plan'
+    if (-not $applyPlan.applied -or $applyPlan.targetVersion -ne '1.0.1') { throw 'M0006 apply result did not report the applied pinned version.' }
+    if ((Get-Content -Raw $propsPath) -notmatch 'sample.alpha" Version="1\.0\.1' -or (Get-Content -Raw $consumerB) -notmatch 'sample.alpha" Version="1\.0\.1') { throw 'M0006 apply missed a central or direct declaration.' }
+    $contentConfig = Join-Path $work 'M0006 content NuGet.Config'
+    $escapedContentFeed = [System.Security.SecurityElement]::Escape($contentFeed)
+    Set-Content -LiteralPath $contentConfig -Encoding utf8 -Value "<configuration><packageSources><clear/><add key=`"local-content`" value=`"$escapedContentFeed`" /></packageSources></configuration>"
+    foreach ($projectFile in @($consumerA, $consumerB)) {
+        Invoke-Checked 'dotnet' @('restore', $projectFile, '--configfile', $contentConfig) $work | Out-Null
+        Invoke-Checked 'dotnet' @('build', $projectFile, '--configuration', 'Release', '--no-restore') (Split-Path -Parent $projectFile) | Out-Null
+        $outputPayload = Join-Path (Split-Path -Parent $projectFile) 'bin/Release/net11.0/nested/payload.bin'
+        if (-not (Test-Path -LiteralPath $outputPayload) -or (Get-FileHash -LiteralPath $outputPayload -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $oracle 'nested/payload.bin') -Algorithm SHA256).Hash) { throw "M0006 consumer output bytes differ from the independently prepared source: $projectFile" }
+        if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectFile) 'bin/Release/net11.0/.nuget-content')) { throw 'M0006 package manifest metadata leaked into consumer output.' }
+    }
+    if ([Convert]::ToHexString($alphaOldBytes) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($oldAlphaWork))) { throw 'M0006 pin transition changed the old alpha work copy.' }
+    if ((Get-FileHash -LiteralPath $alphaInitial -Algorithm SHA256).Hash -ne $alphaInitialHash -or (Get-FileHash -LiteralPath $betaInitial -Algorithm SHA256).Hash -ne $betaInitialHash) { throw 'M0006 lifecycle changed an original package snapshot.' }
+    $pins = Invoke-CapturedProcess $installedExe @('workspace', 'list', '--workspace', $projectRoot, '--json') $work
+    Assert-ToolResult $pins 0 'M0006 final pin listing'
+    $pinList = Assert-JsonLine $pins.Stdout 'M0006 pin list'
+    if ($pinList.members[0].alias -ne 'alpha' -or $pinList.members[0].version -ne '1.0.1' -or $pinList.members[1].alias -ne 'beta' -or $pinList.members[1].version -ne '2.0.0') { throw 'M0006 lifecycle changed an unrelated package pin.' }
+    Write-Output "M0006 installed reference workflow passed. alpha initial SHA-256: $alphaInitialHash; beta snapshot SHA-256: $betaInitialHash; independent output oracle: $((Get-FileHash -LiteralPath (Join-Path $oracle 'nested/payload.bin') -Algorithm SHA256).Hash)"
 
     $updateTop = Join-Path $work 'update pack'
     New-ToolPackage $updateVersion $updateTop

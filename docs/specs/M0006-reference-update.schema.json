@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0006-reference-update.schema.json",
+  "title": "M0006 workspace reference update result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "alias", "packageId", "targetVersion", "applied", "canApply", "changes", "blockers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "workspaceReferenceUpdate" },
+    "alias": { "type": "string", "minLength": 1 },
+    "packageId": { "type": "string", "minLength": 1 },
+    "targetVersion": { "type": "string", "minLength": 1 },
+    "applied": { "type": "boolean" },
+    "canApply": { "type": "boolean" },
+    "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } },
+    "blockers": { "type": "array", "items": { "$ref": "#/$defs/blocker" } },
+    "partialState": { "type": "string" }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "packageId", "sourceKind", "oldVersion", "newVersion", "classification"],
+      "properties": {
+        "path": { "type": "string" },
+        "packageId": { "type": "string" },
+        "sourceKind": { "enum": ["packageReference", "centralPackageVersion"] },
+        "oldVersion": { "type": "string" },
+        "newVersion": { "type": "string" },
+        "classification": { "enum": ["supported", "noOp"] }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "code", "message"],
+      "properties": {
+        "path": { "type": "string" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}
