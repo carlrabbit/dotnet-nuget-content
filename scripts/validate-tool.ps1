@@ -567,6 +567,64 @@ try {
     if ($pinList.members[0].alias -ne 'alpha' -or $pinList.members[0].version -ne '1.0.1' -or $pinList.members[1].alias -ne 'beta' -or $pinList.members[1].version -ne '2.0.0') { throw 'M0006 lifecycle changed an unrelated package pin.' }
     Write-Output "M0006 installed reference workflow passed. alpha initial SHA-256: $alphaInitialHash; beta snapshot SHA-256: $betaInitialHash; independent output oracle: $((Get-FileHash -LiteralPath (Join-Path $oracle 'nested/payload.bin') -Algorithm SHA256).Hash)"
 
+    # M0007: advance, inspect consumer drift, and explicitly clean one clean obsolete sibling.
+    $lifecycleRoot = Join-Path $work 'M0007 lifecycle root'
+    $lifecycleFeed = Join-Path $lifecycleRoot 'feed'
+    $lifecycleSource = Join-Path $work 'M0007 independent source'
+    New-Item -ItemType Directory -Force -Path $lifecycleRoot, $lifecycleFeed, $lifecycleSource | Out-Null
+    $lifecycleOriginal = [byte[]](0, 255, 1, 128, 42, 13, 10)
+    $lifecycleUpdated = [byte[]](9, 8, 7, 0, 255, 64)
+    [System.IO.File]::WriteAllBytes((Join-Path $lifecycleSource 'payload.bin'), $lifecycleOriginal)
+    $lifecycleOracle = Join-Path $work 'M0007 consumer source oracle.bin'
+    [System.IO.File]::WriteAllBytes($lifecycleOracle, $lifecycleOriginal)
+    $lifecycleInitial = Join-Path $lifecycleFeed 'sample.lifecycle.1.0.0.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('pack', '--id', 'sample.lifecycle', '--version', '1.0.0', '--source', $lifecycleSource, '--output', $lifecycleInitial) $work) 0 'M0007 initial lifecycle package'
+    $lifecycleInitialHash = (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'init', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace init'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'add', '--alias', 'fixtures', '--package', 'feed/sample.lifecycle.1.0.0.nupkg', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace add'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $lifecycleRoot) $work) 0 'M0007 workspace unpack'
+    $lifecycleOldCopy = Join-Path $lifecycleRoot 'content/fixtures'
+    $lifecycleCleanObsolete = Join-Path $lifecycleRoot 'content/fixtures-clean-old'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('unpack', '--package', $lifecycleInitial, '--destination', $lifecycleCleanObsolete) $work) 0 'M0007 clean obsolete sibling fixture'
+    [System.IO.File]::WriteAllBytes((Join-Path $lifecycleOldCopy 'payload.bin'), $lifecycleUpdated)
+    $lifecycleOldWorkHash = (Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash
+    $lifecycleConsumer = Join-Path $lifecycleRoot 'consumer/Consumer.csproj'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecycleConsumer) | Out-Null
+    @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="sample.lifecycle" Version="1.0.0" /></ItemGroup>
+</Project>
+'@ | Set-Content -LiteralPath $lifecycleConsumer -Encoding utf8
+    Set-Content -LiteralPath (Join-Path (Split-Path -Parent $lifecycleConsumer) 'Program.cs') -Value 'System.Console.WriteLine("lifecycle consumer");' -Encoding utf8
+    $lifecycleNext = Join-Path $lifecycleFeed 'sample.lifecycle.1.0.1.nupkg'
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'advance', '--alias', 'fixtures', '--patch', '--output', 'feed/sample.lifecycle.1.0.1.nupkg', '--workspace', $lifecycleRoot) $work) 0 'M0007 coordinated advance'
+    if (-not (Test-Path -LiteralPath $lifecycleNext)) { throw 'M0007 advance did not publish the requested immutable package.' }
+    $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $lifecycleInspect 0 'M0007 inspect after advance'
+    $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 inspection result'
+    if ($lifecycleInspection.members[0].state -ne 'clean' -or $lifecycleInspection.members[0].version -ne '1.0.1') { throw 'M0007 inspect did not report the clean advanced pin.' }
+    if (-not @($lifecycleInspection.members[0].consumers | Where-Object { $_.path -eq 'consumer/Consumer.csproj' -and $_.kind -eq 'direct' -and $_.state -eq 'drift' -and $_.version -eq '1.0.0' }).Count) { throw 'M0007 inspect missed direct consumer version drift.' }
+    if (-not @($lifecycleInspection.members[0].candidates | Where-Object { $_.directory -eq 'content/fixtures-clean-old' -and $_.state -eq 'clean' }).Count) { throw 'M0007 inspect did not identify the clean older sibling candidate.' }
+    $lifecycleConfig = Join-Path $work 'M0007 lifecycle NuGet.Config'
+    $escapedLifecycleFeed = [System.Security.SecurityElement]::Escape($lifecycleFeed)
+    Set-Content -LiteralPath $lifecycleConfig -Encoding utf8 -Value "<configuration><packageSources><clear/><add key=`"local-lifecycle`" value=`"$escapedLifecycleFeed`" /></packageSources></configuration>"
+    Invoke-Checked 'dotnet' @('restore', $lifecycleConsumer, '--configfile', $lifecycleConfig) $work | Out-Null
+    Invoke-Checked 'dotnet' @('build', $lifecycleConsumer, '--configuration', 'Release', '--no-restore') (Split-Path -Parent $lifecycleConsumer) | Out-Null
+    $lifecycleOutput = Join-Path (Split-Path -Parent $lifecycleConsumer) 'bin/Release/net11.0/payload.bin'
+    if (-not (Test-Path -LiteralPath $lifecycleOutput) -or (Get-FileHash -LiteralPath $lifecycleOutput -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $lifecycleOracle -Algorithm SHA256).Hash) { throw 'M0007 consumer bytes differ from the independently prepared original source.' }
+    if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $lifecycleConsumer) 'bin/Release/net11.0/.nuget-content')) { throw 'M0007 manifest metadata leaked into consumer output.' }
+    $previewLifecycle = Invoke-CapturedProcess $installedExe @('workspace', 'cleanup', '--alias', 'fixtures', '--directory', 'content/fixtures-clean-old', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $previewLifecycle 0 'M0007 cleanup preview'
+    if ((Assert-JsonLine $previewLifecycle.Stdout 'M0007 cleanup preview result').state -ne 'eligible') { throw 'M0007 cleanup preview did not report the clean sibling eligible.' }
+    if (-not (Test-Path -LiteralPath $lifecycleCleanObsolete)) { throw 'M0007 cleanup preview changed the filesystem.' }
+    $cleanupLifecycle = Invoke-CapturedProcess $installedExe @('workspace', 'cleanup', '--alias', 'fixtures', '--directory', 'content/fixtures-clean-old', '--workspace', $lifecycleRoot, '--apply', '--json') $work
+    Assert-ToolResult $cleanupLifecycle 0 'M0007 explicit clean sibling cleanup'
+    if (Test-Path -LiteralPath $lifecycleCleanObsolete) { throw 'M0007 cleanup did not remove the approved clean obsolete sibling.' }
+    if (-not (Test-Path -LiteralPath $lifecycleInitial) -or (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash -ne $lifecycleInitialHash) { throw 'M0007 cleanup changed or removed an immutable package.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 advance changed the retained modified old workspace.' }
+    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advanced pin 1.0.1; approved cleanup removed only content/fixtures-clean-old."
+
     $updateTop = Join-Path $work 'update pack'
     New-ToolPackage $updateVersion $updateTop
     Copy-Item -LiteralPath (Join-Path $updateTop "top-level/$packageId.$updateVersion.nupkg") -Destination $feed
