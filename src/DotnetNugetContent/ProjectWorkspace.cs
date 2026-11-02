@@ -63,6 +63,52 @@ internal sealed class WorkspaceUsageResult
     public List<string> Diagnostics { get; set; } = [];
 }
 
+internal sealed class WorkspaceInspectResult
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string Kind { get; set; } = "workspaceInspect";
+    public List<WorkspaceInspectMember> Members { get; set; } = [];
+    public List<string> Diagnostics { get; set; } = [];
+}
+internal sealed class WorkspaceInspectMember
+{
+    public string Alias { get; set; } = "";
+    public string PackageId { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string PackageFile { get; set; } = "";
+    public string Directory { get; set; } = "";
+    public string State { get; set; } = "";
+    public List<string> Added { get; set; } = [];
+    public List<string> Modified { get; set; } = [];
+    public List<string> Deleted { get; set; } = [];
+    public List<WorkspaceConsumerVersion> Consumers { get; set; } = [];
+    public List<WorkspaceCleanupCandidate> Candidates { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Error { get; set; }
+}
+internal sealed class WorkspaceConsumerVersion
+{
+    public string Path { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string State { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Version { get; set; }
+}
+internal sealed class WorkspaceCleanupCandidate
+{
+    public string Directory { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string State { get; set; } = "";
+}
+internal sealed class WorkspaceCleanupResult
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string Kind { get; set; } = "workspaceCleanup";
+    public string Alias { get; set; } = "";
+    public string Directory { get; set; } = "";
+    public string State { get; set; } = "";
+    public bool Applied { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Diagnostic { get; set; }
+}
+
 internal sealed class WorkspaceUsageMemberResult
 {
     public string Alias { get; set; } = "";
@@ -92,6 +138,8 @@ internal sealed class WorkspaceAssetEvidence
 [JsonSerializable(typeof(WorkspaceListResult))]
 [JsonSerializable(typeof(ProjectWorkspaceStatusResult))]
 [JsonSerializable(typeof(WorkspaceUsageResult))]
+[JsonSerializable(typeof(WorkspaceInspectResult))]
+[JsonSerializable(typeof(WorkspaceCleanupResult))]
 internal partial class ProjectWorkspaceJsonContext : JsonSerializerContext { }
 
 internal static class ProjectWorkspace
@@ -123,6 +171,9 @@ internal static class ProjectWorkspace
             case "pack": return await PackAsync(options);
             case "set": return await SetAsync(options);
             case "usage": return await UsageAsync(options);
+            case "advance": return await AdvanceAsync(options);
+            case "inspect": return await InspectAsync(options);
+            case "cleanup": return await CleanupAsync(options);
             default: throw new CliException($"Unknown workspace command '{command}'. Run 'dotnet-nuget-content workspace --help'.");
         }
     }
@@ -277,6 +328,257 @@ internal static class ProjectWorkspace
             foreach (var d in output.Diagnostics) Console.Error.WriteLine($"diagnostic: {d}");
         }
         return output.Diagnostics.Count == 0 ? 0 : 1;
+    }
+
+    internal static Func<string, Task>? AdvanceStageHook { get; set; }
+    internal static Func<string, Task>? CleanupDeleteHook { get; set; }
+    internal static Func<string, Task>? InspectSourceReadHook { get; set; }
+
+    private static async Task<int> AdvanceAsync(Dictionary<string, string> options)
+    {
+        Ensure(options, "alias", "version", "major", "minor", "patch", "directory", "output", "message", "workspace");
+        var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (marker, manifest) = await ReadRootAsync(root);
+        var m = FindMember(manifest, Required(options, "alias")); var selection = PackageVersionSelection.FromOptions(options);
+        var currentDir = ResolvePath(root, m.Directory);
+        if (!Directory.Exists(currentDir)) throw new CliException($"Workspace member directory is missing: {m.Directory}", 1);
+        var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(currentDir); VerifyPin(m, baseline);
+        var nextVersion = selection.Resolve(m.Version).ToNormalizedString();
+        if (NuGet.Versioning.NuGetVersion.Parse(nextVersion) <= NuGet.Versioning.NuGetVersion.Parse(m.Version)) throw new CliException("New version must be greater than the workspace pin.", 1);
+        var nextDirectory = NormalizeRelative(options.GetValueOrDefault("directory") ??
+            Relative(root, Path.Combine(Directory.GetParent(currentDir)!.FullName, m.Alias + "-" + nextVersion)), "directory");
+        var destination = ResolvePath(root, nextDirectory);
+        if (Directory.Exists(destination) || File.Exists(destination)) throw new CliException($"Advance directory already exists: {nextDirectory}", 1);
+        if (manifest.Members.Any(x => PathRelated(x.Directory, nextDirectory))) throw new CliException($"Advance directory overlaps registered member directory: {nextDirectory}", 1);
+        var packagePath = options.TryGetValue("output", out var outputArg)
+            ? ResolveInput(root, outputArg)
+            : Path.Combine(Directory.GetParent(currentDir)!.FullName, $"{m.PackageId}.{nextVersion}.nupkg");
+        var packageRel = RelativeFromRoot(root, packagePath);
+        packagePath = ResolvePath(root, packageRel);
+        if (!packageRel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Workspace packageFile must refer to a local .nupkg file.", 1);
+        EnsurePackageOutputOutsideMembers(root, packagePath, manifest.Members);
+        if (string.Equals(Path.GetFullPath(packagePath), Path.GetFullPath(marker), StringComparison.OrdinalIgnoreCase) ||
+            PathRelated(packageRel, nextDirectory) || File.Exists(packagePath) || Directory.Exists(packagePath))
+            throw new CliException($"Advance package output is unsafe or already exists: {packageRel}", 1);
+        var candidateMembers = manifest.Members.Select(x => x).ToList();
+        var updated = new ProjectWorkspaceMember { Alias = m.Alias, PackageId = m.PackageId, Version = nextVersion, PackageFile = packageRel, Directory = nextDirectory };
+        candidateMembers[candidateMembers.IndexOf(m)] = updated; ValidateMembers(candidateMembers, root);
+        string? createdPackage = null; var createdDirectory = false;
+        try
+        {
+            createdPackage = await ContentPackages.PackManagedAsync(currentDir, selection, packagePath, options.GetValueOrDefault("message"));
+            if (AdvanceStageHook is not null) await AdvanceStageHook("packagePublished");
+            await ContentPackages.UnpackAsync(createdPackage, destination, null); createdDirectory = true;
+            if (AdvanceStageHook is not null) await AdvanceStageHook("directoryUnpacked");
+            var newBaseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(destination);
+            VerifyPin(updated, newBaseline);
+            if (!await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(destination)) throw new CliException("New advance directory is not clean after unpack.", 1);
+            manifest.Members[manifest.Members.IndexOf(m)] = updated;
+            await WriteAtomicAsync(marker, manifest);
+        }
+        catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException or JsonException)
+        {
+            var artifacts = string.Join("; ", new[] { createdPackage is not null ? $"unregistered package: {Relative(root, createdPackage)}" : null, createdDirectory ? $"unregistered directory: {nextDirectory}" : null }.Where(x => x is not null));
+            throw new CliException($"Workspace advance did not complete; pin remains {m.PackageId} {m.Version}. {ex.Message}" + (artifacts.Length == 0 ? "" : $" Created artifacts remain for recovery: {artifacts}. Choose new output/directory paths or handle them explicitly."), 1);
+        }
+        Console.WriteLine($"Advanced {m.Alias}: {m.PackageId} {m.Version} -> {nextVersion}");
+        Console.WriteLine($"Package: {packageRel}; directory: {nextDirectory}; previous directory and package remain intact.");
+        return 0;
+    }
+
+    private static async Task<int> InspectAsync(Dictionary<string, string> options)
+    {
+        Ensure(options, "alias", "all", "workspace", "json"); EnsureExclusive(options, "alias", "all");
+        if (!options.ContainsKey("alias") && !options.ContainsKey("all")) throw new CliException("Specify '--alias NAME' or '--all'.");
+        var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root); var selected = Select(manifest, options);
+        var usage = await DiscoverUsageAsync(root, manifest, selected); var result = new WorkspaceInspectResult(); result.Diagnostics = usage.Diagnostics;
+        foreach (var m in selected)
+        {
+            var item = new WorkspaceInspectMember { Alias = m.Alias, PackageId = m.PackageId, Version = m.Version, PackageFile = m.PackageFile, Directory = m.Directory };
+            var dir = ResolvePath(root, m.Directory);
+            if (!Directory.Exists(dir)) item.State = "missing";
+            else try
+            {
+                var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(dir); VerifyPin(m, baseline);
+                using var doc = JsonDocument.Parse(await ContentPackages.StatusJsonAsync(dir, null)); var changes = doc.RootElement.GetProperty("changes");
+                item.Added = ReadPaths(changes.GetProperty("added")); item.Modified = ReadPaths(changes.GetProperty("modified")); item.Deleted = ReadPaths(changes.GetProperty("deleted"));
+                item.State = doc.RootElement.GetProperty("clean").GetBoolean() ? "clean" : "modified";
+            }
+            catch (Exception ex) when (ex is CliException or IOException or JsonException)
+            { item.State = ex.Message.Contains("but pin is", StringComparison.Ordinal) || ex.Message.Contains("Pinned package mismatch", StringComparison.Ordinal) ? "mismatched" : "corrupt"; item.Error = ex.Message; }
+            if (usage.Members.FirstOrDefault(x => x.Alias == m.Alias) is { } u)
+            {
+                foreach (var s in u.UseSites.DistinctBy(s => s.Path, StringComparer.OrdinalIgnoreCase))
+                {
+                    var consumer = await ReadConsumerVersionAsync(root, s.Path, m.PackageId, m.Version, result.Diagnostics);
+                    if (consumer is not null) item.Consumers.Add(consumer);
+                }
+            }
+            item.Candidates = await FindCandidatesAsync(root, m, dir, manifest.Members);
+            result.Members.Add(item);
+        }
+        result.Diagnostics = result.Diagnostics.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        if (options.ContainsKey("json")) Console.WriteLine(JsonSerializer.Serialize(result, ProjectWorkspaceJsonContext.Default.WorkspaceInspectResult));
+        else foreach (var m in result.Members)
+        {
+            Console.WriteLine($"{m.Alias}: {m.PackageId} pinned {m.Version} | {m.State} | package {m.PackageFile} | directory {m.Directory}");
+            foreach (var c in m.Consumers) Console.WriteLine($"  consumer {c.Path}: {c.Kind} {c.State}{(c.Version is null ? "" : " (" + c.Version + ")")}");
+            foreach (var c in m.Candidates) Console.WriteLine($"  obsolete candidate {c.Directory}: {c.Version} ({c.State})");
+            if (m.Error is not null) Console.WriteLine($"  diagnostic: {m.Error}");
+        }
+        foreach (var d in result.Diagnostics) Console.Error.WriteLine($"diagnostic: {d}");
+        return result.Members.Any(x => x.State is "corrupt" or "mismatched") || result.Diagnostics.Count > 0 ? 1 : 0;
+    }
+
+    private static async Task<int> CleanupAsync(Dictionary<string, string> options)
+    {
+        Ensure(options, "alias", "directory", "workspace", "apply", "json");
+        var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root); var m = FindMember(manifest, Required(options, "alias"));
+        var rel = NormalizeRelative(Required(options, "directory"), "directory"); var active = ResolvePath(root, m.Directory); var target = ResolvePath(root, rel);
+        var result = new WorkspaceCleanupResult { Alias = m.Alias, Directory = rel };
+        var deletionStarted = false;
+        try
+        {
+            EnsureCleanupTarget(root, rel, target, active, manifest.Members);
+            var state = await ValidateObsoleteCandidateAsync(target, m);
+            if (state != "clean") throw new CliException($"Target is not an eligible clean obsolete workspace ({state}).", 1);
+            result.State = options.ContainsKey("apply") ? "removed" : "eligible";
+            if (options.ContainsKey("apply"))
+            {
+                EnsureCleanupTarget(root, rel, target, active, manifest.Members);
+                if (await ValidateObsoleteCandidateAsync(target, m) != "clean") throw new CliException("Target changed during cleanup revalidation.", 1);
+                deletionStarted = true;
+                if (CleanupDeleteHook is not null) await CleanupDeleteHook(target);
+                Directory.Delete(target, true);
+                result.Applied = true;
+            }
+        }
+        catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException)
+        { result.State = deletionStarted ? "partial" : "blocked"; result.Diagnostic = ex.Message; }
+        if (options.ContainsKey("json")) Console.WriteLine(JsonSerializer.Serialize(result, ProjectWorkspaceJsonContext.Default.WorkspaceCleanupResult));
+        else Console.WriteLine($"{rel}: {result.State}" + (result.Diagnostic is null ? "" : $" ({result.Diagnostic})"));
+        return result.Diagnostic is null ? 0 : 1;
+    }
+
+    private static void EnsureCleanupTarget(string root, string rel, string target, string active, List<ProjectWorkspaceMember> members)
+    {
+        if (!Directory.Exists(target) || (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) throw new CliException("Cleanup target must be an existing ordinary directory.", 1);
+        if (!IsWithin(root, target) || string.Equals(root, target, StringComparison.OrdinalIgnoreCase) || PathRelated(rel, ".nuget-content") || string.Equals(rel, Marker, StringComparison.OrdinalIgnoreCase)) throw new CliException("Cleanup target is outside the permitted workspace scope.", 1);
+        if (!string.Equals(Directory.GetParent(target)?.FullName, Directory.GetParent(active)?.FullName, StringComparison.OrdinalIgnoreCase)) throw new CliException("Cleanup target must be an immediate sibling of the selected member directory.", 1);
+        if (members.Any(x => PathRelated(rel, x.Directory))) throw new CliException("Cleanup target overlaps a registered workspace member.", 1);
+        RejectTreeReparsePoints(target);
+    }
+    private static void RejectTreeReparsePoints(string target)
+    {
+        var pending = new Stack<string>(); pending.Push(target);
+        while (pending.Count > 0)
+            foreach (var entry in Directory.EnumerateFileSystemEntries(pending.Pop()))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) throw new CliException($"Cleanup target contains a reparse point: {entry}", 1);
+                if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+            }
+    }
+    private static async Task<string> ValidateObsoleteCandidateAsync(string target, ProjectWorkspaceMember selected)
+    {
+        var b = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(target);
+        if (!string.Equals(b.Package.Id, selected.PackageId, StringComparison.OrdinalIgnoreCase)) return "unrelated";
+        if (NuGet.Versioning.NuGetVersion.Parse(b.Package.Version) >= NuGet.Versioning.NuGetVersion.Parse(selected.Version)) return "notOlder";
+        return await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(target) ? "clean" : "modified";
+    }
+    private static async Task<List<WorkspaceCleanupCandidate>> FindCandidatesAsync(string root, ProjectWorkspaceMember selected, string active, List<ProjectWorkspaceMember> members)
+    {
+        var result = new List<WorkspaceCleanupCandidate>(); var parent = Directory.GetParent(active)?.FullName;
+        if (parent is null || !Directory.Exists(parent) || (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) return result;
+        foreach (var dir in Directory.EnumerateDirectories(parent).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.Equals(dir, active, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) continue;
+            var rel = Relative(root, dir); if (members.Any(m => PathRelated(rel, m.Directory))) continue;
+            try
+            {
+                RejectTreeReparsePoints(dir); var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(dir);
+                if (!string.Equals(baseline.Package.Id, selected.PackageId, StringComparison.OrdinalIgnoreCase) || NuGet.Versioning.NuGetVersion.Parse(baseline.Package.Version) >= NuGet.Versioning.NuGetVersion.Parse(selected.Version)) continue;
+                result.Add(new WorkspaceCleanupCandidate { Directory = rel, Version = baseline.Package.Version, State = await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(dir) ? "clean" : "modified" });
+            }
+            catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException or JsonException) { }
+        }
+        return result;
+    }
+    private static async Task<WorkspaceConsumerVersion?> ReadConsumerVersionAsync(string root, string relPath, string packageId, string pinnedVersion, List<string> diagnostics)
+    {
+        var declarationPath = relPath;
+        var kind = "direct";
+        var unresolved = new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
+        try
+        {
+            var path = ResolvePath(root, relPath);
+            var before = await File.ReadAllBytesAsync(path);
+            var xml = await LoadXmlAsync(path);
+            if (InspectSourceReadHook is not null) await InspectSourceReadHook(path);
+            var after = await File.ReadAllBytesAsync(path);
+            if (!before.AsSpan().SequenceEqual(after))
+            {
+                diagnostics.Add($"Project source changed during inspection: {relPath}.");
+                return unresolved;
+            }
+            var references = xml.Descendants().Where(x => x.Name.LocalName == "PackageReference" &&
+                string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (references.Length == 0) return null;
+            if (references.Length > 1)
+            {
+                diagnostics.Add($"Ambiguous package references for {packageId} in {relPath}: found {references.Length} matching declarations.");
+                return unresolved;
+            }
+            var reference = references[0];
+            if (reference.AncestorsAndSelf().Any(x => x.Attribute("Condition") is not null))
+            {
+                diagnostics.Add($"Conditional package reference for {packageId} in {relPath} cannot be resolved without MSBuild evaluation.");
+                return unresolved;
+            }
+            var version = (string?)reference.Attribute("Version") ?? reference.Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
+            if (version is null)
+            {
+                var current = Path.GetDirectoryName(path)!;
+                while (IsWithin(root, current))
+                {
+                    var props = Path.Combine(current, "Directory.Packages.props");
+                    if (File.Exists(props))
+                    {
+                        var propsBefore = await File.ReadAllBytesAsync(props);
+                        var propsXml = await LoadXmlAsync(props);
+                        if (InspectSourceReadHook is not null) await InspectSourceReadHook(props);
+                        declarationPath = Relative(root, props); kind = "central";
+                        unresolved = new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
+                        var propsAfter = await File.ReadAllBytesAsync(props);
+                        if (!propsBefore.AsSpan().SequenceEqual(propsAfter))
+                        {
+                            diagnostics.Add($"Project source changed during inspection: {declarationPath}.");
+                            return unresolved;
+                        }
+                        var declarations = propsXml.Descendants().Where(x => x.Name.LocalName == "PackageVersion" &&
+                            string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+                        if (declarations.Length > 1 || declarations.Any(x => x.AncestorsAndSelf().Any(a => a.Attribute("Condition") is not null)))
+                        {
+                            diagnostics.Add($"Ambiguous or conditional central version for {packageId} in {declarationPath}.");
+                            return unresolved;
+                        }
+                        if (declarations.Length == 1)
+                            version = (string?)declarations[0].Attribute("Version") ?? declarations[0].Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
+                        break;
+                    }
+                    if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase)) break;
+                    current = Directory.GetParent(current)?.FullName ?? root;
+                }
+            }
+            if (version is null) return new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = "unresolved" };
+            var exact = NuGet.Versioning.NuGetVersion.TryParse(version, out var parsed) && parsed.ToNormalizedString() == version;
+            var state = version.Contains('$') || version.Contains('*') ? "dynamic" : !exact ? "unresolved" : string.Equals(version, pinnedVersion, StringComparison.OrdinalIgnoreCase) ? "pinned" : "drift";
+            return new WorkspaceConsumerVersion { Path = declarationPath, Kind = kind, State = state, Version = version };
+        }
+        catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException or CliException)
+        {
+            diagnostics.Add($"Cannot resolve consumer declaration for {packageId} in {declarationPath}: {ex.Message}");
+            return unresolved;
+        }
     }
 
     private static async Task<int> ReferencesAsync(string[] args)
@@ -517,9 +819,9 @@ internal static class ProjectWorkspace
         foreach (var part in relative.Split('/'))
         {
             current = Path.Combine(current, part);
-            if (File.Exists(current) || Directory.Exists(current))
-                try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new CliException($"Workspace path contains a reparse point: {relative}", 1); }
-                catch (FileNotFoundException) { }
+            try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new CliException($"Workspace path contains a reparse point: {relative}", 1); }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
         }
         return full;
     }
@@ -581,12 +883,17 @@ internal static class ProjectWorkspace
           workspace unpack (--alias NAME | --all) [--workspace ROOT]
           workspace status [--alias NAME | --all] [--workspace ROOT] [--json]
           workspace pack --alias NAME (--version VERSION | --major | --minor | --patch) [--output FILE] [--message TEXT] [--workspace ROOT]
+          workspace advance --alias NAME (--version VERSION | --major | --minor | --patch) [--directory REL] [--output FILE] [--message TEXT] [--workspace ROOT]
           workspace set --alias NAME --package FILE [--directory REL] [--workspace ROOT]
           workspace usage [--alias NAME | --all] [--workspace ROOT] [--json]
+          workspace inspect (--alias NAME | --all) [--workspace ROOT] [--json]
+          workspace cleanup --alias NAME --directory REL [--workspace ROOT] [--apply] [--json]
           workspace references update --alias NAME [--version VERSION] [--workspace ROOT] [--apply] [--json]
 
         Workspace paths are local to the selected project root. Pin updates are explicit.
         Usage checks local project files and prior restore evidence without restoring.
         Reference updates preview by default; pass --apply to write supported project declarations.
+        Advance creates an immutable package and clean copy before changing the selected pin.
+        Cleanup previews by default and only removes one named, clean obsolete sibling with --apply.
         """;
 }

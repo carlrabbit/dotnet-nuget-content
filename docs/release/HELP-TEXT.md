@@ -1,4 +1,4 @@
-# Root CLI help — M0006 authored copy
+# Root CLI help — M0007 authored copy
 
 This is the authored root help contract for the installed CLI. Keep the fenced output synchronized with `Cli.HelpText` and the installed-tool validation check.
 
@@ -31,5 +31,5 @@ Errors are written to stderr.
 
 Project workspaces:
   dotnet-nuget-content workspace --help
-  dotnet-nuget-content workspace init|add|list|unpack|status|pack|set|usage|references
+  dotnet-nuget-content workspace init|add|list|unpack|status|pack|advance|set|usage|inspect|cleanup|references
 ```

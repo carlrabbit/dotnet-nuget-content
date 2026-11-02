@@ -58,11 +58,11 @@ try {
     $help = Invoke-Native @('--help')
     if ($help.ExitCode -ne 0 -or $help.Stderr -ne '' -or $help.Stdout -notmatch '(?m)^Usage:') { throw 'Native --help did not return usage on stdout with exit 0 and empty stderr.' }
     $version = Invoke-Native @('--version')
-    Assert-NativeResult $version 0 "0.1.0$([Environment]::NewLine)" '' 'Native --version'
+    Assert-NativeResult $version 0 "1.0.0$([Environment]::NewLine)" '' 'Native --version'
     $unknown = Invoke-Native @('no-such-command')
     if ($unknown.ExitCode -ne 2 -or $unknown.Stdout -ne '' -or $unknown.Stderr -notmatch "^error: Unknown command 'no-such-command'\.") { throw 'Unknown command did not return the documented usage error on stderr with exit 2.' }
     $badOptions = Invoke-Native @('pack', '--id', 'sample')
-    if ($badOptions.ExitCode -ne 2 -or $badOptions.Stdout -ne '' -or $badOptions.Stderr -ne "error: Missing required option '--version'.$([Environment]::NewLine)") { throw 'Malformed command options did not return the documented usage error on stderr with exit 2.' }
+    if ($badOptions.ExitCode -ne 2 -or $badOptions.Stdout -ne '' -or $badOptions.Stderr -notmatch '^error: Specify exactly one of --version, --major, --minor, or --patch\.') { throw 'Malformed command options did not return the documented usage error on stderr with exit 2.' }
 
     $source = Join-Path $work 'source files with spaces'
     $feed = Join-Path $work 'package feed with spaces'
