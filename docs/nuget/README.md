@@ -2,12 +2,12 @@
 
 **Immutable content packages for .NET projects.** Package arbitrary datasets, test assets or other files into a versioned NuGet snapshot. Unpack into a managed workspace, inspect file changes, repack at a higher version, and consume the payload through ordinary `PackageReference`.
 
-**Windows x64 only.** Native AOT .NET tool; .NET CLI/SDK is required for installation.
+**Version 2.0.0; Windows x64 only.** Native AOT .NET tool; .NET CLI/SDK is required for installation. The tool is distributed as the `dotnet-nuget-content` NuGet tool package plus its matching `dotnet-nuget-content.win-x64` runtime package.
 
 ## Install
 
 ```powershell
-dotnet tool install --global dotnet-nuget-content --version 1.0.0
+dotnet tool install --global dotnet-nuget-content --version 2.0.0
 ```
 
 ## Use

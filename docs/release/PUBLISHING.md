@@ -1,22 +1,29 @@
-# M0004 release and human approval boundary
+# 2.0.0 candidate preparation and publication boundary
 
-Target publishing feed is **NuGet.org only**, exclusively as the top-level `.NET tool` and matching `win-x64` RID-specific Native AOT NuGet package. No GitHub Release, downloadable binaries, alternative installers, or CI workflow changes.
+The release consists only of the NuGet .NET tool package `dotnet-nuget-content` 2.0.0 and its `dotnet-nuget-content.win-x64` Native AOT package 2.0.0. Windows x64 is the only supported distribution target. There is no standalone binary, other RID package, or GitHub Release.
 
-Build exact `1.0.0` candidate on existing authorized Windows x64 AOT toolchain from clean identified source. Produce both `.nupkg` files, SHA-256 receipts, NuGet metadata and README inspection, local-feed installed-tool tests, full managed snapshot + isolated independent PackageReference consumer. Record source revision and toolchain. A qualified release candidate must be immutable; publishing must use **identical files**, not rebuild them.
+## Prepare a local candidate
 
-Implement repository-owned `eng/publish.ps1` (PowerShell) as a conventional operator-facing script, conceptually similar to `carlrabbit/yadg`. Planning could not verify the exact yadg implementation path; inspect its live scripts if accessible, but do not let resemblance override the following contract.
+Run from a clean intended source commit on the existing authorized Windows x64 Native AOT host:
 
-- Default command and explicit `-Prepare` mode cannot contact/publish to nuget.org.
-- `-Publish` is a distinct explicit opt-in, accepts only an already qualified candidate directory/manifest with exact SHA-256 checks and version, and requires an unambiguous human confirmation of nuget.org target. No publishing invocation during M0004 implementation or testing.
-- Publish RID-specific `.nupkg` **first**, then top-level pointer `.nupkg`. Failure of RID push stops immediately; partial publication is reported honestly with exact recovery guidance. No silent `--skip-duplicate` masking failed or mismatched package identity.
-- Do not print, hardcode, persist or commit secrets. Read API key from an external secure source only at human-authorized invocation time; avoid insecure command-line exposure when supported by tooling.
-- Provide testable dry-run/mocked push traces proving ordering, refusal, failure paths, wrong feed, missing approval and hash mismatch without real NuGet.org credentials.
-- No implicit new CI infrastructure, tool provisioning, machine configuration changes, or production release execution.
-- Output a durable candidate report containing exact Git SHA, SDK/compiler, version, package IDs/paths/hashes, installed command validation and consumer evidence, and a separate human publication checklist.
-- Public release **is not part of M0004's completion**. Completion state means candidate qualified and manual publication tool ready; subsequent human approval is required.
+```powershell
+pwsh -NoProfile -File eng/publish.ps1 -Prepare
+```
 
-## Final merged-source qualification
+Preparation is offline/local with respect to package feeds. It does not publish. It creates two immutable `.nupkg` files, a versioned `candidate.json`, SHA-256 values, toolchain and source provenance, validation logs, and a human checklist. Existing output directories are never replaced. Preparation on an implementation branch produces **preliminary** evidence only. The release candidate is authoritative only when freshly prepared and fully validated from a clean final merged `main` commit. Any source change after that run requires full requalification.
 
-The M0004 implementation-branch candidate is **pre-merge evidence**, not automatically the final public release candidate. After PR merge and before requesting publication approval, run `eng/publish.ps1 -Prepare` again on the clean, intended final merged release commit using the authorized Windows x64 toolchain. Verify that the resulting `candidate.json` records that exact commit and that both newly created packages pass the complete installed-tool/consumer and mock-publishing gates. Keep these exact files, their SHA-256 values and receipts together; submit them for human approval. Only these approved bytes may be published, without rebuilding in `-Publish` mode. A further source change requires fresh qualification and approval.
+The candidate must pass both installed-tool installation modes and the M0001–M0007 regression lifecycle, independent local-feed consumer byte checks, the reproducible 100-project/10-package scale gate, release mock-publication checks, dependency audit, and release metadata checks. Candidate report and log hashes bind those results to the exact source commit, SDK/compiler, command and package bytes. The prepared directory is read-only; do not rebuild or edit its files.
 
-Dry-run publication checks cover both failure points. If the RID push fails, record no successful package, check NuGet.org for ambiguous acceptance of the RID package before retrying, and hold the top-level pointer. If the RID push succeeds and the pointer push fails, record the RID package as accepted and the pointer as failed; verify the RID package on NuGet.org, then publish the unchanged pointer from the same candidate without rebuilding.
+## Publication controls
+
+- Default invocation and `-Prepare` build local packages and never contact or push to NuGet.org.
+- `-TestPublish` uses synthetic local packages and mocked push delegates. It checks RID-first ordering, stop-on-failure behavior at both push points, partial-state reporting, wrong-feed and wrong-confirmation rejection, hash tampering, and that no API key is emitted or persisted.
+- Real `-Publish` is outside release qualification and was not invoked. It requires an explicitly supplied exact NuGet.org endpoint and confirmation phrase, a final-merged-source candidate receipt, passing and hash-verified validation receipts, exact package identities and hashes, and an unpublished candidate. It rechecks each package hash immediately before pushing.
+- The win-x64 package is pushed first. The top-level pointer is pushed only after that push succeeds. A failed first push holds the pointer; a failed second push reports the RID package as the only package reported accepted. Recovery uses the unchanged files from the same candidate, never a rebuild.
+- `NUGET_API_KEY` must be supplied through an external secure source only for a separately authorized publication invocation. It is never written to the candidate or logs.
+
+The human operator must review `candidate.json`, all receipts, package metadata and the checklist, confirm ownership and publication rights, and separately authorize any real NuGet.org push. Candidate qualification does not itself authorize publication.
+
+## M0008 qualification status
+
+Implementation-branch validation is preliminary. After merge, run `eng/publish.ps1 -Prepare` on the clean merged `main` commit and retain that exact candidate and its receipts. Do not report 2.0.0 release qualification until the final merged-commit gates pass. No package or GitHub release is published by preparation.

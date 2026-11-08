@@ -1,8 +1,8 @@
-# M0007 planning handoff
+# M0008 ready planning package
 
-Primary ready milestone: `docs/milestones/M0007-workspace-lifecycle.md`.
-Normative product contract: `docs/specs/M0007-workspace-lifecycle.md`.
-Planner-seeded pending ledger: `.execution/M0007-workspace-lifecycle.md`.
-Transport-only implementation prompt: `IMPLEMENTER-PROMPT.md`.
+Primary authority: `docs/milestones/M0008-release-qualification.md`.
+Normative release contract: `docs/specs/M0008-release-qualification.md`.
+Pending-only obligation registry: `.execution/M0008-release-qualification.md`.
+Transport-only execution prompt: `IMPLEMENTER-PROMPT.md`.
 
-This is a ZIP of *new* repository-relative authority and ledger files. Extract into a new implementation branch from current main; apply docs updates required by the milestone. No guide files, research scratch, pre-completed evidence or implementation code are included.
+Extract on M0008 implementation branch. No source implementation and no guide files are included. Implementation owns release documentation changes and exact qualification evidence. Publication prohibited without separate explicit human authorization.

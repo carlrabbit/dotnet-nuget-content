@@ -1,8 +1,10 @@
-Implement M0007 in `carlrabbit/dotnet-nuget-content` from current main on a new feature branch.
+# EXECUTE — M0008 2.0.0 release qualification
 
-Handoff ZIP: `G:\My Drive\Transfer\M0007-workspace-lifecycle.zip` (verify the file is present before using this path).
-Extract into repository root preserving paths. Read the primary milestone `docs/milestones/M0007-workspace-lifecycle.md`, its seeded `.execution/M0007-workspace-lifecycle.md`, `docs/specs/M0007-workspace-lifecycle.md`, and referenced project authority. Do not load external guide documents.
+Repository: `carlrabbit/dotnet-nuget-content`.
+Handoff: `G:\My Drive\Transfer\M0008-release-qualification.zip`.
 
-Implement coordinated safe `workspace advance`, read-only `workspace inspect` and narrowly scoped preview-first `workspace cleanup`. Preserve all existing commands/contracts and developer-facing UX. Keep xUnit during this milestone; TUnit migration is deferred. No scale benchmark, automatic reference editing or release publication.
+Start from current `main` on a new M0008 implementation branch. Extract archive into repository root preserving relative paths. Read `docs/milestones/M0008-release-qualification.md`, `.execution/M0008-release-qualification.md`, the normative `docs/specs/M0008-release-qualification.md` and referenced repository authority. Implement milestone only, keeping current xUnit framework.
 
-Complete criterion-specific tests/evidence, final Windows x64 installed Native AOT validation, ledger reconciliation and documentation. Push a PR against main and report PR URL, validation receipts and any blockers. Do not publish.
+Update the tooling and release preparation to 2.0.0, qualify installed Windows x64 Native AOT exact package artifacts and real NuGet consumers, run specified 100-project/10-package scale qualification and negative safety gates, and reconcile criterion-by-criterion evidence. Keep `-Publish` uninvoked and all public publication separately human authorized. No CI, host provisioning, new features or platform expansion.
+
+IMPORTANT: A pre-merge PR can supply preliminary implementation evidence only. Final authoritative 2.0.0 release qualification must run from clean **final merged source commit**, with artifact hashes, installed validation and release report bound to that commit. Never claim release qualification before it. Open a PR against main; report PR, tests, candidate status, unfulfilled post-merge gate and any blockers.

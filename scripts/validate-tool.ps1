@@ -1,7 +1,7 @@
 param(
     [string] $Configuration = 'Release',
     [string] $CandidateDirectory,
-    [string] $Version = '0.1.0',
+    [string] $Version = '2.0.0',
     [string] $UpdateVersion
 )
 
@@ -15,7 +15,7 @@ $feed = Join-Path $work 'isolated local NuGet feed'
 $toolPath = Join-Path $work 'isolated global-equivalent tools'
 $localProject = Join-Path $work 'local manifest consumer'
 $version = $Version
-if (-not $UpdateVersion) { $UpdateVersion = if ($version -eq '0.1.0') { '0.1.1' } else { '1.0.1' } }
+if (-not $UpdateVersion) { $UpdateVersion = '2.0.1' }
 $updateVersion = $UpdateVersion
 $packageId = 'dotnet-nuget-content'
 
@@ -111,7 +111,7 @@ function Assert-ReleaseMetadata([System.IO.Compression.ZipArchive] $Archive, [st
         license = 'Unlicense'
         projectUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
         repositoryUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
-        releaseNotes = 'First stable Windows x64 Native AOT .NET tool release. Immutable arbitrary-content package snapshots, managed workspace status and repack, manifest v1, history, SHA-256 validation, JSON inspection, and ordinary PackageReference consumption.'
+        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
     }
     foreach ($name in $expected.Keys) {
         $actual = switch ($name) {

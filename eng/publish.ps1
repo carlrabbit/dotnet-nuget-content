@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src/DotnetNugetContent/DotnetNugetContent.csproj'
-$version = '1.0.0'
+$version = '2.0.0'
 $topId = 'dotnet-nuget-content'
 $ridId = 'dotnet-nuget-content.win-x64'
 $expectedSource = 'https://api.nuget.org/v3/index.json'
@@ -39,12 +39,14 @@ function Get-QualifiedCandidate([string] $Path) {
     $manifestPath = Join-Path $root 'candidate.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Candidate manifest not found: $manifestPath" }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.qualified -ne $true -or $manifest.version -ne $version -or $manifest.sourceCommit -notmatch '^[0-9a-f]{40}$') {
-        throw 'Candidate report is not qualified for the required 1.0.0 release.'
+    if ($manifest.schemaVersion -ne 2 -or $manifest.qualified -ne $true -or $manifest.releaseQualified -ne $true -or $manifest.version -ne $version -or $manifest.sourceCommit -notmatch '^[0-9a-f]{40}$' -or $manifest.sourceTree -notmatch '^[0-9a-f]{40}$' -or $manifest.workingTreeClean -ne $true) {
+        throw 'Candidate report is not qualified for the required final merged-source 2.0.0 release.'
     }
+    if ($manifest.sourceBranch -cne 'main' -or $manifest.qualificationScope -cne 'final-merged-main') { throw 'Only a candidate prepared from clean main is eligible for publication.' }
     if ($manifest.published -ne $false) { throw 'Candidate report does not establish an unpublished release candidate.' }
-    $gates = @($manifest.validation.installedTool, $manifest.validation.publicationMocks)
-    if ($gates.Count -ne 2) { throw 'Candidate report must contain installed-tool and publication-mock validation receipts.' }
+    if ($manifest.licenseReview.passed -ne $true) { throw 'Candidate does not contain a passing repository license/identity review.' }
+    $gates = @($manifest.validation.installedTool, $manifest.validation.native, $manifest.validation.repositoryScale, $manifest.validation.publicationMocks, $manifest.validation.dependencyAudit)
+    if ($gates.Count -ne 5) { throw 'Candidate report must contain installed-tool, native, scale, dependency-audit, and publication-mock receipts.' }
     foreach ($gate in $gates) {
         if ($gate.passed -ne $true -or -not $gate.log -or -not $gate.sha256) { throw 'Candidate report is missing a passing validation receipt.' }
         $logPath = Join-Path $root $gate.log
@@ -52,12 +54,17 @@ function Get-QualifiedCandidate([string] $Path) {
             throw "Candidate validation receipt is missing or changed: $($gate.log)"
         }
     }
+    $scaleReportPath = Join-Path $root $manifest.validation.repositoryScale.report
+    if (-not $manifest.validation.repositoryScale.report -or -not (Test-Path -LiteralPath $scaleReportPath -PathType Leaf) -or (Get-FileHash -LiteralPath $scaleReportPath -Algorithm SHA256).Hash -cne $manifest.validation.repositoryScale.reportSha256) {
+        throw 'Candidate scale report is missing or its SHA-256 does not match.'
+    }
     if (@($manifest.packages).Count -ne 2) { throw 'Candidate must contain exactly the top-level and win-x64 packages.' }
     $ordered = @($manifest.packages | Sort-Object { if ($_.role -eq 'rid') { 0 } elseif ($_.role -eq 'top-level') { 1 } else { 2 } })
     if ($ordered[0].role -ne 'rid' -or $ordered[0].id -ne $ridId -or $ordered[1].role -ne 'top-level' -or $ordered[1].id -ne $topId) {
         throw 'Candidate package identities or publication roles are invalid.'
     }
     foreach ($package in $ordered) {
+        if ([System.IO.Path]::GetFileName([string]$package.file) -cne [string]$package.file) { throw 'Candidate package paths must be file names within the candidate directory.' }
         if ($package.version -ne $version) { throw "Candidate package version mismatch: $($package.file)" }
         $packagePath = Join-Path $root $package.file
         if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) { throw "Candidate package missing: $packagePath" }
@@ -120,24 +127,38 @@ function New-TestPackage([string] $Path, [string] $Id) {
     try {
         $entry = $archive.CreateEntry("$Id.nuspec")
         $writer = [System.IO.StreamWriter]::new($entry.Open())
-        try { $writer.Write("<package><metadata><id>$Id</id><version>1.0.0</version></metadata></package>") } finally { $writer.Dispose() }
+        try { $writer.Write("<package><metadata><id>$Id</id><version>$version</version></metadata></package>") } finally { $writer.Dispose() }
     } finally { $archive.Dispose(); $stream.Dispose() }
 }
 
 function Invoke-MockPublicationChecks {
     $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('dnc-publish-mock-' + [guid]::NewGuid().ToString('N'))
+    $priorApiKey = [Environment]::GetEnvironmentVariable('NUGET_API_KEY')
+    $secretSentinel = 'M0008-SYNTHETIC-API-KEY-DO-NOT-LEAK'
+    [Environment]::SetEnvironmentVariable('NUGET_API_KEY', $secretSentinel)
     New-Item -ItemType Directory -Path $testRoot | Out-Null
     try {
-        $ridFile = "$ridId.1.0.0.nupkg"; $topFile = "$topId.1.0.0.nupkg"
+        $ridFile = "$ridId.$version.nupkg"; $topFile = "$topId.$version.nupkg"
         New-TestPackage (Join-Path $testRoot $ridFile) $ridId
         New-TestPackage (Join-Path $testRoot $topFile) $topId
         $packages = @(
             [pscustomobject]@{ role = 'top-level'; id = $topId; version = $version; file = $topFile; sha256 = (Get-FileHash (Join-Path $testRoot $topFile) -Algorithm SHA256).Hash },
             [pscustomobject]@{ role = 'rid'; id = $ridId; version = $version; file = $ridFile; sha256 = (Get-FileHash (Join-Path $testRoot $ridFile) -Algorithm SHA256).Hash }
         )
-        [System.IO.File]::WriteAllText((Join-Path $testRoot 'installed.log'), 'installed validation passed')
-        [System.IO.File]::WriteAllText((Join-Path $testRoot 'mocks.log'), 'mock publication validation passed')
-        $report = [pscustomobject]@{ qualified = $true; version = $version; sourceCommit = ('a' * 40); published = $false; validation = @{ installedTool = @{ passed = $true; log = 'installed.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'installed.log') -Algorithm SHA256).Hash }; publicationMocks = @{ passed = $true; log = 'mocks.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'mocks.log') -Algorithm SHA256).Hash } }; packages = $packages }
+        foreach ($receipt in @('installed.log', 'native.log', 'scale.log', 'dependencies.log', 'mocks.log', 'scale-report.json')) { [System.IO.File]::WriteAllText((Join-Path $testRoot $receipt), "$receipt passed") }
+        $report = [pscustomobject]@{
+            schemaVersion = 2; qualified = $true; releaseQualified = $true; qualificationScope = 'final-merged-main'
+            version = $version; sourceCommit = ('a' * 40); sourceTree = ('b' * 40); sourceBranch = 'main'; workingTreeClean = $true; published = $false
+            licenseReview = @{ passed = $true }
+            validation = @{
+                installedTool = @{ passed = $true; log = 'installed.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'installed.log') -Algorithm SHA256).Hash }
+                native = @{ passed = $true; log = 'native.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'native.log') -Algorithm SHA256).Hash }
+                repositoryScale = @{ passed = $true; log = 'scale.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'scale.log') -Algorithm SHA256).Hash; report = 'scale-report.json'; reportSha256 = (Get-FileHash (Join-Path $testRoot 'scale-report.json') -Algorithm SHA256).Hash }
+                dependencyAudit = @{ passed = $true; log = 'dependencies.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'dependencies.log') -Algorithm SHA256).Hash }
+                publicationMocks = @{ passed = $true; log = 'mocks.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'mocks.log') -Algorithm SHA256).Hash }
+            }
+            packages = $packages
+        }
         $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
         $candidate = Get-QualifiedCandidate $testRoot
         $trace = [System.Collections.Generic.List[string]]::new()
@@ -155,7 +176,7 @@ function Invoke-MockPublicationChecks {
         $mockStatusPath = Join-Path $testRoot 'mock-publication-status.json'
         Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock first push failure' $mockStatusPath
         $mockStatus = Get-Content -LiteralPath $mockStatusPath -Raw | ConvertFrom-Json
-        if ($mockStatus.failedPackage -ne $ridId -or @($mockStatus.published).Count -ne 0 -or $mockStatus.recovery -notmatch "Check NuGet.org for $ridId 1.0.0" -or $mockStatus.recovery -notmatch "Do not push $topId") {
+        if ($mockStatus.failedPackage -ne $ridId -or @($mockStatus.published).Count -ne 0 -or $mockStatus.recovery -notmatch "Check NuGet.org for $ridId $version" -or $mockStatus.recovery -notmatch "Do not push $topId") {
             throw 'A failed first push did not record honest partial publication state and recovery guidance.'
         }
 
@@ -177,7 +198,7 @@ function Invoke-MockPublicationChecks {
         $secondStatusPath = Join-Path $testRoot 'mock-second-publication-status.json'
         Save-PublicationFailureStatus $candidate @($script:publishCompleted) 'mock second push failure' $secondStatusPath
         $secondStatus = Get-Content -LiteralPath $secondStatusPath -Raw | ConvertFrom-Json
-        if ($secondStatus.failedPackage -ne $topId -or (@($secondStatus.published) -join ',') -ne $ridId -or $secondStatus.recovery -notmatch "Verify it on NuGet.org, then publish the unchanged top-level package $topId 1.0.0" -or $secondStatus.recovery -notmatch 'do not rebuild') {
+        if ($secondStatus.failedPackage -ne $topId -or (@($secondStatus.published) -join ',') -ne $ridId -or $secondStatus.recovery -notmatch "Verify it on NuGet.org, then publish the unchanged top-level package $topId $version" -or $secondStatus.recovery -notmatch 'do not rebuild') {
             throw 'Second-push failure did not record correct partial-publication recovery.'
         }
 
@@ -194,8 +215,16 @@ function Invoke-MockPublicationChecks {
         $rejected = $false
         try { Get-QualifiedCandidate $testRoot } catch { $rejected = $true }
         if (-not $rejected) { throw 'Candidate hash tampering was not rejected.' }
-        Write-Output 'Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, both first- and second-push failure states, wrong feed, missing approval, and hash tampering are rejected or recorded.'
-    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        foreach ($receipt in Get-ChildItem -LiteralPath $testRoot -File -Recurse | Where-Object { $_.Extension -in @('.json', '.log') }) {
+            if ([System.IO.File]::ReadAllText($receipt.FullName).Contains($secretSentinel, [StringComparison]::Ordinal)) { throw 'Mock publication persisted synthetic API-key material.' }
+        }
+        $mockOutput = 'Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, both first- and second-push failure states, wrong feed, missing approval, and hash tampering are rejected or recorded.'
+        if ($mockOutput.Contains($secretSentinel, [StringComparison]::Ordinal)) { throw 'Mock publication output leaked synthetic API-key material.' }
+        Write-Output $mockOutput
+    } finally {
+        Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+        [Environment]::SetEnvironmentVariable('NUGET_API_KEY', $priorApiKey)
+    }
 }
 
 if ($TestPublish) { Invoke-MockPublicationChecks; exit 0 }
@@ -220,10 +249,15 @@ if ($Publish) {
 $sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the Git source revision.' }
 if (& git -C $repoRoot status --porcelain) { throw 'Candidate build requires a clean source worktree.' }
+$sourceBranch = (& git -C $repoRoot branch --show-current).Trim()
+$sourceTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceTree -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the Git source tree.' }
+$releaseQualified = $sourceBranch -ceq 'main'
+$qualificationScope = if ($releaseQualified) { 'final-merged-main' } else { 'preliminary-implementation-branch' }
 $candidateRoot = if ($OutputDirectory) { [System.IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoRoot "artifacts/release-candidate-$version-$sourceCommit" }
 if (Test-Path -LiteralPath $candidateRoot) { throw "Candidate directory already exists and will not be overwritten: $candidateRoot" }
 $sdkVersion = (& dotnet --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.0\.100-rc\.1') { throw "Expected the authorized .NET 11 RC SDK; found '$sdkVersion'." }
+if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.0\.100-rc\.') { throw "Expected the authorized .NET 11 RC SDK; found '$sdkVersion'." }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'The existing Visual Studio locator is unavailable; Native AOT prerequisites were not installed.' }
 $compilerPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/cl.exe' | Select-Object -First 1)
@@ -247,6 +281,25 @@ try {
     $toolValidation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/validate-tool.ps1') -CandidateDirectory $candidateRoot -Version $version 2>&1
     $toolValidation | Set-Content -LiteralPath (Join-Path $candidateRoot 'installed-tool-validation.log') -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw 'Installed-tool validation against the exact candidate packages failed. See installed-tool-validation.log.' }
+    $nativeValidation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/validate-native.ps1') -CandidateDirectory $candidateRoot 2>&1
+    $nativeValidation | Set-Content -LiteralPath (Join-Path $candidateRoot 'native-validation.log') -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw 'Native AOT candidate validation failed. See native-validation.log.' }
+    $scaleValidation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/validate-scale.ps1') -CandidateDirectory $candidateRoot 2>&1
+    $scaleValidation | Set-Content -LiteralPath (Join-Path $candidateRoot 'repository-scale-validation.log') -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw '100-project/10-package scale validation failed. See repository-scale-validation.log.' }
+    $dependencyOutput = & dotnet list $project package --vulnerable --include-transitive 2>&1
+    $dependencyOutput | Set-Content -LiteralPath (Join-Path $candidateRoot 'dependency-audit.log') -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw 'Dependency advisory audit failed. See dependency-audit.log.' }
+    $dependencyText = $dependencyOutput -join "`n"
+    if ($dependencyText -match '(?im)^\s*(Critical|High)\s+') { throw 'High-risk dependency advisory found; release qualification is blocked.' }
+    $projectXml = [xml][System.IO.File]::ReadAllText($project)
+    $licenseExpression = [string]$projectXml.Project.PropertyGroup.PackageLicenseExpression
+    $authors = [string]$projectXml.Project.PropertyGroup.Authors
+    $licenseText = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'LICENSE'))
+    $knownAuthors = @(& git -C $repoRoot log --format='%an' --all -- 'src/DotnetNugetContent')
+    $remoteUrl = (& git -C $repoRoot remote get-url origin).Trim()
+    if ($licenseExpression -cne 'Unlicense' -or $authors -notin $knownAuthors -or $licenseText -notmatch 'public domain' -or $remoteUrl -notmatch 'github\.com[:/]carlrabbit/dotnet-nuget-content(?:\.git)?$') { throw 'Repository LICENSE, package author attribution, and project-owner metadata do not reconcile; human ownership/license review is required.' }
+    $licenseReview = [ordered]@{ passed = $true; packageLicenseExpression = $licenseExpression; packageAuthors = $authors; recordedProjectAuthors = @($knownAuthors | Select-Object -Unique); repositoryOwner = 'carlrabbit'; origin = $remoteUrl; basis = 'LICENSE text, csproj attribution, Git project history, and origin repository identity were compared; human review of legal ownership and publication rights remains required.' }
     $mockValidation = & pwsh -NoProfile -File $PSCommandPath -TestPublish 2>&1
     $mockValidation | Set-Content -LiteralPath (Join-Path $candidateRoot 'publishing-mock-validation.log') -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw 'Mock publishing validation failed. See publishing-mock-validation.log.' }
@@ -256,13 +309,27 @@ try {
         [ordered]@{ role = 'rid'; id = $ridId; version = $version; file = [System.IO.Path]::GetFileName($ridPath); sha256 = (Get-FileHash -LiteralPath $ridPath -Algorithm SHA256).Hash },
         [ordered]@{ role = 'top-level'; id = $topId; version = $version; file = [System.IO.Path]::GetFileName($topPath); sha256 = (Get-FileHash -LiteralPath $topPath -Algorithm SHA256).Hash }
     )
-    $report = [ordered]@{ schemaVersion = 1; qualified = $true; version = $version; sourceCommit = $sourceCommit; sourceRepository = 'https://github.com/carlrabbit/dotnet-nuget-content'; preparedUtc = [DateTime]::UtcNow.ToString('o'); toolchain = $toolchain; packages = $packages; validation = [ordered]@{ installedTool = [ordered]@{ passed = $true; log = 'installed-tool-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'installed-tool-validation.log') -Algorithm SHA256).Hash }; publicationMocks = [ordered]@{ passed = $true; log = 'publishing-mock-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'publishing-mock-validation.log') -Algorithm SHA256).Hash } }; published = $false }
+    $report = [ordered]@{
+        schemaVersion = 2; qualified = $releaseQualified; releaseQualified = $releaseQualified; qualificationScope = $qualificationScope
+        version = $version; sourceCommit = $sourceCommit; sourceTree = $sourceTree; sourceBranch = $sourceBranch; workingTreeClean = $true
+        sourceRepository = 'https://github.com/carlrabbit/dotnet-nuget-content'; command = 'pwsh -NoProfile -File eng/publish.ps1 -Prepare'
+        preparedUtc = [DateTime]::UtcNow.ToString('o'); toolchain = $toolchain; packages = $packages
+        licenseReview = $licenseReview
+        validation = [ordered]@{
+            installedTool = [ordered]@{ passed = $true; log = 'installed-tool-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'installed-tool-validation.log') -Algorithm SHA256).Hash }
+            native = [ordered]@{ passed = $true; log = 'native-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'native-validation.log') -Algorithm SHA256).Hash }
+            repositoryScale = [ordered]@{ passed = $true; log = 'repository-scale-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'repository-scale-validation.log') -Algorithm SHA256).Hash; report = 'repository-scale-report.json'; reportSha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'repository-scale-report.json') -Algorithm SHA256).Hash }
+            dependencyAudit = [ordered]@{ passed = $true; log = 'dependency-audit.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'dependency-audit.log') -Algorithm SHA256).Hash; licenseReview = $licenseReview }
+            publicationMocks = [ordered]@{ passed = $true; log = 'publishing-mock-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'publishing-mock-validation.log') -Algorithm SHA256).Hash }
+        }
+        published = $false
+    }
     $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $candidateRoot 'candidate.json') -Encoding utf8
     $checklist = @"
-# Manual publication checklist — dotnet-nuget-content 1.0.0
+# Manual publication checklist — dotnet-nuget-content 2.0.0
 
 - Review candidate.json and both SHA-256 values. Do not rebuild.
-- Confirm source revision and installed-tool/consumer validation logs.
+- Confirm this is a final-merged-main candidate and review installed-tool, native, 100-project scale, dependency, consumer and publication-mock logs.
 - Confirm the repository owner has approved publication rights and NuGet.org identity.
 - Supply NUGET_API_KEY from an external secure source at invocation time.
 - Run eng/publish.ps1 -Publish -CandidateDirectory <this directory> -Source https://api.nuget.org/v3/index.json -Confirmation 'PUBLISH TO NUGET.ORG'.
@@ -273,9 +340,13 @@ No package has been published by candidate preparation.
 "@
     $checklist | Set-Content -LiteralPath (Join-Path $candidateRoot 'PUBLISH-CHECKLIST.md') -Encoding utf8
     Get-ChildItem -LiteralPath $candidateRoot -File | ForEach-Object { $_.IsReadOnly = $true }
-    Write-Output "Qualified local candidate: $candidateRoot"
+    Write-Output "Prepared local candidate ($qualificationScope): $candidateRoot"
     Get-Content -LiteralPath (Join-Path $candidateRoot 'candidate.json')
 } catch {
-    if (Test-Path -LiteralPath $candidateRoot) { Remove-Item -LiteralPath $candidateRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $candidateRoot -PathType Container) {
+        $failurePath = Join-Path $candidateRoot 'preparation-failure.txt'
+        [System.IO.File]::WriteAllText($failurePath, "Preparation failed at $([DateTime]::UtcNow.ToString('o')).`n$($_.Exception.Message)`nThis directory is incomplete and not publishable.`n", [System.Text.UTF8Encoding]::new($false))
+        throw "Local preparation failed. Incomplete, non-publishable diagnostics were retained at $candidateRoot. $($_.Exception.Message)"
+    }
     throw
 }
