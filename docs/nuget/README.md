@@ -10,6 +10,15 @@
 dotnet tool install --global dotnet-nuget-content --version 2.0.0
 ```
 
+For a repository-local installation instead:
+
+```powershell
+dotnet new tool-manifest
+dotnet tool install dotnet-nuget-content --version 2.0.0
+```
+
+Both installation scopes support the same invocation: `dotnet nuget-content --version`. The package and executable remain named `dotnet-nuget-content`; the .NET CLI recognizes the `dotnet-` prefix.
+
 ## Use
 
 Start with an example file and a local package feed:
@@ -17,19 +26,19 @@ Start with an example file and a local package feed:
 ```powershell
 New-Item -ItemType Directory -Force ./assets, ./feed | Out-Null
 Set-Content -LiteralPath ./assets/example.txt -Value 'Example content'
-dotnet-nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./feed/example.assets.1.0.0.nupkg
-dotnet-nuget-content unpack --package ./feed/example.assets.1.0.0.nupkg --destination ./working-copy
-dotnet-nuget-content status --source ./working-copy
+dotnet nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./feed/example.assets.1.0.0.nupkg
+dotnet nuget-content unpack --package ./feed/example.assets.1.0.0.nupkg --destination ./working-copy
+dotnet nuget-content status --source ./working-copy
 ```
 
-After editing the working copy:
+The `./working-copy` directory created by `unpack` is already editable—**no extra copy is required**. Edit it directly, then create another immutable package:
 
 ```powershell
 Set-Content -LiteralPath ./working-copy/example.txt -Value 'Updated content'
-dotnet-nuget-content pack --source ./working-copy --version 1.1.0 --output ./feed/example.assets.1.1.0.nupkg
+dotnet nuget-content pack --source ./working-copy --version 1.1.0 --output ./feed/example.assets.1.1.0.nupkg
 ```
 
-The new package is written to `./feed` as requested. Without `--output`, it would appear beside the workspace. The workspace baseline is unchanged.
+The new package is written to `./feed` as requested. Without `--output`, it would appear beside the editable directory. **Current behavior:** managed `pack` preserves the original `.nuget-content/manifest.json` baseline and working directory. It does not delete the directory or advance its baseline; unpack the new package into another directory to start a clean baseline, or use `workspace advance` with project-integrated workspaces.
 
 The installed `dotnet-nuget-content` tool and the generated `example.assets` content package are **different NuGet packages**. To consume `example.assets` in a .NET project:
 
@@ -48,15 +57,19 @@ Use `status --json` and `history --json` for automation. The tool supports trust
 Repositories that use several content packages can create a checked-in project marker and pin local packages independently:
 
 ```powershell
-dotnet-nuget-content workspace init
-dotnet-nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
-dotnet-nuget-content workspace list --json
-dotnet-nuget-content workspace unpack --all
-dotnet-nuget-content workspace status --all --json
-dotnet-nuget-content workspace usage --all --json
+dotnet nuget-content workspace init
+dotnet nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
+dotnet nuget-content workspace list --json
+dotnet nuget-content workspace unpack --alias fixtures
+# Edit ./content/fixtures/example.txt in place.
+Set-Content -LiteralPath ./content/fixtures/example.txt -Value 'Workspace update'
+dotnet nuget-content workspace status --alias fixtures --json
+dotnet nuget-content workspace advance --alias fixtures --patch
+dotnet nuget-content workspace inspect --alias fixtures --json
+dotnet nuget-content workspace usage --all --json
 ```
 
-Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. Use `workspace advance --alias NAME --patch` to create a new immutable package and clean work copy, then atomically move that member's pin. The previous work copy and package remain. `workspace inspect --all` reports observed pin/workspace state, consumer declaration drift, and eligible older sibling candidates. Cleanup previews by default; `workspace cleanup --alias NAME --directory REL --apply` removes only that explicitly named clean obsolete sibling. Modified copies and package files are preserved. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md) and [M0007 lifecycle contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0007-workspace-lifecycle.md).
+Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. Edit the extracted member directory in place; `workspace advance --alias NAME --patch` creates a new immutable package and a fresh clean work copy, then atomically moves that member's pin. No manual file copy is needed. The previous work copy and package remain. `workspace inspect --all` reports observed pin/workspace state, consumer declaration drift, and eligible older sibling candidates. Cleanup previews by default; `workspace cleanup --alias NAME --directory REL --apply` removes only that explicitly named clean obsolete sibling. Modified copies and package files are preserved. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md) and [M0007 lifecycle contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0007-workspace-lifecycle.md).
 
 [Complete documentation and source](https://github.com/carlrabbit/dotnet-nuget-content)
 
