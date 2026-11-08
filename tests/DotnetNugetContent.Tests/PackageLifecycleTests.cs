@@ -158,6 +158,7 @@ public sealed class PackageLifecycleTests : IDisposable
             Console.SetError(error);
             Assert.Equal(0, await Cli.RunAsync(["--help"]));
             Assert.Contains("pack --id", output.ToString());
+            Assert.Contains("dotnet nuget-content pack --id", output.ToString());
             output.GetStringBuilder().Clear();
             Assert.Equal(0, await Cli.RunAsync(["--version"]));
             Assert.Equal("2.0.0", output.ToString().Trim());
