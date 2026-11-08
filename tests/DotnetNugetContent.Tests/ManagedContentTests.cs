@@ -113,7 +113,10 @@ public sealed class ManagedContentTests : IDisposable
             var failed = await RunCli(root, "pack", "--source", workspace, "--patch", "--output", failedDeletePackage);
             Assert.Equal(1, failed.ExitCode);
             Assert.Contains("could not be removed completely", failed.Stderr);
+            Assert.Contains(failedDeletePackage, failed.Stderr);
             Assert.Contains(workspace, failed.Stderr);
+            Assert.Contains("version 1.0.3", failed.Stderr);
+            Assert.Contains("Previous baseline version: 1.0.2", failed.Stderr);
         }
         finally { ContentPackages.BeforeManagedDirectoryDeleteHook = null; lockedPayload?.Dispose(); }
         Assert.True(File.Exists(failedDeletePackage)); Assert.True(Directory.Exists(workspace));
