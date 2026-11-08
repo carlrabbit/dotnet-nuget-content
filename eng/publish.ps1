@@ -200,6 +200,11 @@ function Invoke-MockPublicationChecks {
         $rejected = $false
         try { Assert-ReleaseCommitIdentity $preliminary $preliminaryIdentity } catch { $rejected = $true }
         if (-not $rejected) { throw 'A preliminary feature-branch candidate was accepted for final qualification.' }
+        $preliminary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
+        $rejected = $false
+        try { Get-QualifiedCandidate $testRoot $preliminaryIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A preliminary feature-branch candidate was accepted for publication.' }
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
 
         # Omitted and mismatched expected SHAs cannot qualify; a dirty worktree is independently rejected.
         foreach ($case in @(
