@@ -36,7 +36,7 @@ Scope: initial package manifest, public JSON Schema, metadata validation, manage
 
 - `docs/SPECS.md` fixes command-default semantics; `docs/specs/manifest-v1.md` plus `.schema.json` are public format authority; `docs/ENGINEERING.md` fixes execution/validation and trust boundaries.
 - No released version exists. There is **no legacy or compatibility requirement**. All new packages include a manifest. Unmanaged initial creation still does not require the user to write one.
-- No ancestor search: a managed workspace is recognized at the supplied root or CWD root only. Status/history are read-only. Ordinary managed pack publishes the complete package and then atomically replaces the baseline marker with the exact embedded manifest; workspace packaging selects preservation explicitly.
+- No ancestor search: a managed workspace is recognized at the supplied root or CWD root only. Status/history are read-only. The current M0009 amendment supersedes historical in-place baseline replacement: ordinary managed pack publishes and validates the new package, then deletes its disposable extraction. Workspace staging pack preserves the directory; workspace advance updates its pin and deletes the extraction.
 - Chronological linear ancestry is descriptive only. A new package is a complete snapshot, not a delta or historical payload store.
 - Native AOT and NuGet.Packaging continue; preserve correct contentFiles consumer semantics and no-clobber/staging. No unrelated command/product expansion.
 - Managed pack without `--output` writes `<id>.<version>.nupkg` to the parent of the resolved workspace root for either implicit CWD or explicit `--source`. Explicit outputs inside that root are rejected to prevent package self-inclusion.
