@@ -92,7 +92,7 @@ External blockers or planning escalations: none currently known.
 - [x] Reaudit every obligation and case, preserving independently valid historical evidence only where still applicable.
 - [x] Publish durable final criterion-specific completion evidence to the milestone before marking done.
 
-## Managed pack baseline advancement amendment
+## Superseded M0008 pack-baseline amendment (historical evidence only)
 
 The ordinary managed-pack acceptance contract was intentionally revised on implementation branch `codex/managed-pack-baseline-advancement`. Current AC-05 requires successful package publication followed by atomic replacement of the existing workspace manifest with the exact embedded package manifest. AC-06 retains old-baseline/no-partial-package guarantees on pre-publication failures and requires explicit partial-outcome diagnostics when publication succeeds but baseline replacement fails. Prior completion receipts above describe the historical contract and are not evidence for this amendment.
 
@@ -102,3 +102,8 @@ The ordinary managed-pack acceptance contract was intentionally revised on imple
 - **Native gates:** `scripts/validate-native.ps1` passed from a fresh Windows x64 Native AOT build; executable SHA-256 `92ED8934631A15EDEED8DDA2DAA62437E33C1309B47EEA535362BC405E59A121`. It exercised 1.2.4, 1.2.5 and 1.2.6 repacks in the same directory and an independent PackageReference consumer. `scripts/validate-tool.ps1` passed the installed 2.0.0 tool flow, including a second patch to 1.1.1 from the same installed workspace, consumer restore/build, existing workspace lifecycle, 301 files, Unicode path, 64 MiB streaming, and forced-termination safety checks. Installed PE SHA-256 `92ED8934631A15EDEED8DDA2DAA62437E33C1309B47EEA535362BC405E59A121`; top-level package SHA-256 `C546437610FCDC9A128484F0482CA545E969AAA2FB4458B3B83F11B9C8BA20D8`; `win-x64` package SHA-256 `B45518696972B2002EF88007C0744ED2CC111177A7C9C980B9DDA443E8AE7D07`.
 
 These are implementation-branch receipts. The working-tree source commit and PR merge commit still need final review and post-merge release qualification; no package or release was published.
+
+
+### M0009 superseding lifecycle — no new validation claimed
+
+The current disposable-extraction behavior is specified and evidenced in `docs/specs/M0009-disposable-extractions.md` and `.execution/M0009-disposable-extractions.md`. The historic in-place-baseline evidence above does not validate the new lifecycle; all relevant tests and installed-tool gates must be rerun. No historical receipts are rewritten as current passes.
