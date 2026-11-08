@@ -111,7 +111,7 @@ function Assert-ReleaseMetadata([System.IO.Compression.ZipArchive] $Archive, [st
         license = 'Unlicense'
         projectUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
         repositoryUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
-        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, in-place ordinary managed pack baseline advancement, managed multi-package workspaces with explicit pinning, bounded local usage discovery, consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
+        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, disposable unpack/edit/pack workspaces, managed multi-package workspaces with explicit pinning, bounded local usage discovery, consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
     }
     foreach ($name in $expected.Keys) {
         $actual = switch ($name) {
