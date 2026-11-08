@@ -325,8 +325,8 @@ try {
     $markerBefore = [System.IO.File]::ReadAllBytes($markerPath)
     $repack = Invoke-Tool @('pack', '--source', $workspace, '--version', '1.1.0', '--message', 'installed update', '--output', $managedPackage)
     Assert-ToolResult $repack 0 'Installed tool managed repack'
-    $markerAfter = [System.IO.File]::ReadAllBytes($markerPath)
-    if ([Convert]::ToHexString($markerBefore) -ceq [Convert]::ToHexString($markerAfter)) { throw 'Managed repack did not advance its baseline marker.' }
+    if (Test-Path -LiteralPath $workspace) { throw 'Managed repack did not remove the extracted working directory.' }
+    Assert-ToolResult (Invoke-Tool @('unpack', '--package', $managedPackage, '--destination', $workspace)) 0 'Unpack new managed version for continued editing'
     $cleanAfterRepack = Invoke-Tool @('status', '--source', $workspace, '--json')
     Assert-ToolResult $cleanAfterRepack 0 'Clean workspace after managed repack'
     $cleanAfterRepackJson = Assert-JsonLine $cleanAfterRepack.Stdout 'Clean workspace after managed repack status'
@@ -359,7 +359,8 @@ try {
     $repeatedManagedPackage = Join-Path $work 'managed snapshot 1.1.1.nupkg'
     $repeatedRepack = Invoke-Tool @('pack', '--source', $workspace, '--patch', '--output', $repeatedManagedPackage)
     Assert-ToolResult $repeatedRepack 0 'Installed tool repeated in-place managed patch'
-    if (-not (Test-Path -LiteralPath (Join-Path $workspace 'repeat.json')) -or (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash -cne $firstManagedPackageHash) { throw 'Repeated managed patch changed workspace content or the earlier immutable package.' }
+    if ((Test-Path -LiteralPath $workspace) -or (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash -cne $firstManagedPackageHash) { throw 'Repeated managed patch failed to remove the extraction or changed the earlier package.' }
+    Assert-ToolResult (Invoke-Tool @('unpack', '--package', $repeatedManagedPackage, '--destination', $workspace)) 0 'Unpack repeated managed version'
     $repeatedStatus = Invoke-Tool @('status', '--source', $workspace, '--json')
     Assert-ToolResult $repeatedStatus 0 'Clean workspace after repeated managed patch'
     $repeatedStatusJson = Assert-JsonLine $repeatedStatus.Stdout 'Repeated managed patch status'
@@ -623,7 +624,12 @@ try {
     $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
     Assert-ToolResult $lifecycleInspect 0 'M0007 inspect after advance'
     $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 inspection result'
-    if ($lifecycleInspection.members[0].state -ne 'clean' -or $lifecycleInspection.members[0].version -ne '1.0.1') { throw 'M0007 inspect did not report the clean advanced pin.' }
+    if ($lifecycleInspection.members[0].state -ne 'missing' -or $lifecycleInspection.members[0].version -ne '1.0.1' -or (Test-Path -LiteralPath $lifecycleOldCopy)) { throw 'M0007 advance did not clean up the extracted directory or update the pin.' }
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $lifecycleRoot) $work) 0 'M0007 unpack advanced pin for new edits'
+    $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $lifecycleInspect 0 'M0007 inspect new extraction'
+    $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 re-unpacked inspection result'
+    if ($lifecycleInspection.members[0].state -ne 'clean') { throw 'M0007 freshly unpacked pin was not clean.' }
     if (-not @($lifecycleInspection.members[0].consumers | Where-Object { $_.path -eq 'consumer/Consumer.csproj' -and $_.kind -eq 'direct' -and $_.state -eq 'drift' -and $_.version -eq '1.0.0' }).Count) { throw 'M0007 inspect missed direct consumer version drift.' }
     if (-not @($lifecycleInspection.members[0].candidates | Where-Object { $_.directory -eq 'content/fixtures-clean-old' -and $_.state -eq 'clean' }).Count) { throw 'M0007 inspect did not identify the clean older sibling candidate.' }
     $lifecycleConfig = Join-Path $work 'M0007 lifecycle NuGet.Config'
@@ -643,8 +649,8 @@ try {
     if (-not (Assert-JsonLine $cleanupLifecycle.Stdout 'M0007 cleanup apply result').applied) { throw 'M0007 completed cleanup did not report applied=true.' }
     if (Test-Path -LiteralPath $lifecycleCleanObsolete) { throw 'M0007 cleanup did not remove the approved clean obsolete sibling.' }
     if (-not (Test-Path -LiteralPath $lifecycleInitial) -or (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash -ne $lifecycleInitialHash) { throw 'M0007 cleanup changed or removed an immutable package.' }
-    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 advance changed the retained modified old workspace.' }
-    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advanced pin 1.0.1; approved cleanup removed only content/fixtures-clean-old."
+    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 new extraction differs from the edited packaged content.' }
+    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advance updated pin without duplicating extraction; obsolete sibling cleanup remained explicit."
 
     # M0007 EC-07b: observe an actual recursive deletion before terminating the isolated process.
     $interruptRoot = Join-Path $work 'M0007 cleanup interruption root'
