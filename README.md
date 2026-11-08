@@ -41,11 +41,11 @@ dotnet nuget-content status --source ./working-copy
 Set-Content -LiteralPath ./working-copy/example.txt -Value 'Updated content'
 dotnet nuget-content status --source ./working-copy --json
 dotnet nuget-content pack --source ./working-copy --minor --output ./feed/example.assets.1.1.0.nupkg --message "Refresh assets"
-dotnet nuget-content status --source ./working-copy
-dotnet nuget-content history --source ./working-copy
+# ./working-copy has been removed after successful package verification.
+dotnet nuget-content history --package ./feed/example.assets.1.1.0.nupkg
 ```
 
-Successful ordinary managed `pack` writes the complete immutable package beside the editable directory, then atomically advances that directory's `.nuget-content/manifest.json` to the exact manifest in the package. The working directory and user files stay in place, so `status` is clean and you can continue editing there and run `pack --patch` again. Existing package files are never overwritten. If package creation fails, the old baseline remains. If package creation succeeds but baseline replacement fails, the command reports the package path, both versions and non-destructive recovery steps; the old baseline and published package are retained.
+Successful managed `pack` writes and verifies the immutable package, then **deletes the extracted editable directory**. No extra working-directory copy is created. Existing package files are never overwritten. Failed package creation retains the extraction. If cleanup fails, the published package remains available and any remaining extracted files must be inspected before manual cleanup. To edit a new version later, unpack that package again. Run `pack --source ./working-copy` from its parent directory on Windows; cleanup may fail if a shell or another process holds the extraction open.
 
 The generated `example.assets` package is distinct from the `dotnet-nuget-content` tool package. To consume it, create a .NET project and add the generated package using the local `feed` directory:
 
@@ -95,18 +95,16 @@ dotnet nuget-content workspace unpack --alias fixtures
 Set-Content -LiteralPath ./content/fixtures/example.txt -Value 'Another update'
 dotnet nuget-content workspace status --alias fixtures --json
 
-# Create a package only; the registered pin and member baseline remain unchanged.
-dotnet nuget-content workspace pack --alias fixtures --patch
-
-# Create 1.1.1, unpack a clean new working copy, and advance this alias.
+# Publish 1.1.1, update the selected project pin and remove its extracted directory.
 dotnet nuget-content workspace advance --alias fixtures --patch
 dotnet nuget-content workspace inspect --alias fixtures --json
+
+# The directory is absent until you unpack the new pinned package for another edit.
+dotnet nuget-content workspace unpack --alias fixtures
 dotnet nuget-content workspace usage --all --json
 ```
 
-The unpacked `content/fixtures` folder is the editable work area: edit its files directly. `workspace advance` packages those edits, materializes a new clean directory (for this example, `content/fixtures-1.1.1`), and updates the selected alias's pin. Continue editing in the newly selected directory. Nothing must be copied manually. Add other package aliases independently as needed. The earlier working directory and package remain. A pre-commit failure keeps the old pin and reports any new package or directory so you can recover without overwriting it. `workspace inspect --all --json` shows member state, locally observed consumer version drift, and proven older sibling candidates. `workspace cleanup --alias fixtures --directory content/fixtures-old` is a preview; add `--apply` to remove that one target only when it is a clean, lower-version managed sibling. Modified work copies and package files are preserved. Usage discovery examines local project declarations and optional previous `project.assets.json` evidence without running restore. See the [workspace contracts](docs/specs/M0005-project-workspace.md) and [M0007 lifecycle/JSON contracts](docs/specs/M0007-workspace-lifecycle.md).
-
-The three packaging operations have distinct effects: ordinary `pack --source DIR --patch` advances that directory's baseline in place; `workspace pack --alias NAME --patch` creates an immutable package but preserves the member baseline and root pin; `workspace advance --alias NAME --patch` preserves the old directory, creates a new clean copy, and atomically advances the root pin.
+The `content/fixtures` directory is a temporary editable extraction. `workspace advance` creates the new immutable package, updates the selected member's `version` and `packageFile` in `nuget-content.json`, and **deletes that extraction**. The member's directory path is unchanged, so `workspace unpack --alias fixtures` recreates it from the new pinned package when needed. Other member pins and directories are unaffected. No 2 GB second extraction is created during the advance. `workspace inspect` reports the directory as `missing` between pack and the next unpack. `workspace pack` is an explicitly staging-only alternative: it creates a package but does not change the pin or remove the working directory. Ordinary managed `pack` deletes its extraction but does not update project pins; use `workspace advance` for registered members. Obsolete sibling directories from earlier workflows can still be removed through preview-first `workspace cleanup`. See the [workspace contracts](docs/specs/M0005-project-workspace.md) and [M0007 lifecycle contract](docs/specs/M0007-workspace-lifecycle.md).
 
 Exit codes: 0 success; 1 operation/integrity failure; 2 usage error. Errors go to stderr.
 
@@ -130,13 +128,14 @@ See [product specification](docs/SPECS.md), [engineering contract](docs/ENGINEER
 For a managed workspace, choose a stable version increment from its baseline:
 
 ```powershell
+# After unpacking a managed package into ./working-copy:
 dotnet nuget-content pack --source ./working-copy --patch
-# or: --minor / --major
+# The extraction is removed on success. Unpack the new package before editing again.
 
 dotnet nuget-content workspace pack --alias fixtures --patch
 ```
 
-`--version VERSION` remains available, and initial `pack --id ...` still requires an explicit version. Relative increments require a stable three-number baseline. Ordinary managed `pack` advances its baseline after package publication; `workspace pack` preserves its member baseline and pin; `workspace advance` preserves the existing directory while creating a new clean copy and advancing the pin.
+Initial `pack --id ...` still requires an explicit version. Relative increments use the stable three-component baseline in the extracted directory. A successful ordinary managed `pack` removes that extraction; `workspace pack` only stages a package, and `workspace advance` updates the pin then removes the extraction.
 
 To synchronize local consuming projects, preview first:
 
