@@ -1,9 +1,9 @@
-# Root CLI help — M0007 authored copy
+# Root CLI help — 2.0.0 authored copy
 
 This is the authored root help contract for the installed CLI. Keep the fenced output synchronized with `Cli.HelpText` and the installed-tool validation check.
 
 ```text
-dotnet-nuget-content — immutable NuGet packages for arbitrary files
+dotnet-nuget-content 2.0.0 — immutable NuGet packages for arbitrary files (Windows x64 only)
 
 Usage:
   dotnet-nuget-content --help

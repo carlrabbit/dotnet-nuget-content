@@ -1,6 +1,6 @@
-# 1.0 NuGet public metadata contract
+# 2.0.0 NuGet public metadata contract
 
-Public package ID `dotnet-nuget-content`, command `dotnet-nuget-content`, version `1.0.0`; matching Native AOT payload package `dotnet-nuget-content.win-x64`, also `1.0.0`. No `any` fallback or other platforms.
+Public package ID `dotnet-nuget-content`, command `dotnet-nuget-content`, version `2.0.0`; matching Native AOT payload package `dotnet-nuget-content.win-x64`, also `2.0.0`. The top-level package points only to the `win-x64` Native AOT package. No `any` fallback, standalone binary, or other platform is supported.
 
 Title: **dotnet-nuget-content — immutable content snapshots**
 
@@ -12,6 +12,6 @@ ProjectUrl / RepositoryUrl: `https://github.com/carlrabbit/dotnet-nuget-content`
 
 Package README: `docs/nuget/README.md`; embed as NuGet readme, verify top-level and RID package metadata.
 
-Release notes: **First stable Windows x64 Native AOT .NET tool release. Immutable arbitrary-content package snapshots, managed workspace status and repack, manifest v1, history, SHA-256 validation, JSON inspection, and ordinary PackageReference consumption.**
+Release notes: **Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.**
 
 **Human-owned facts**: Inspect the repository LICENSE and actual author/owner. Do not invent a license or copyright owner. Set correct `PackageLicenseExpression` or `PackageLicenseFile`. If no verified distribution license exists, block release qualification and request a human decision. Do not silently create a new license.

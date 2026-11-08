@@ -4,7 +4,7 @@
 
 | Attribute | Value |
 |---|---|
-| State | ready |
+| State | done |
 | Mode | ai-executed-human-reviewed |
 | Guide | agentic-project-guides 0.9.3 planning authority; no external guide reading during implementation |
 | Registered profiles | `base`, `cli-tool` (repository-wide; profile metadata 0.9.1) |

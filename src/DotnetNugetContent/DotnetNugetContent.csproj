@@ -5,7 +5,7 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <PackageId>dotnet-nuget-content</PackageId>
     <Title>dotnet-nuget-content — immutable content snapshots</Title>
     <Description>Windows command-line tool for creating and maintaining immutable NuGet packages of arbitrary files. Supports versioned snapshots, workspace status, change history, SHA-256 verification, and JSON output. Generated packages integrate with ordinary .NET PackageReference consumers.</Description>
@@ -15,7 +15,7 @@
     <RepositoryUrl>https://github.com/carlrabbit/dotnet-nuget-content</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>dotnet-tool nuget content files snapshots versioning nativeaot</PackageTags>
-    <PackageReleaseNotes>First stable Windows x64 Native AOT .NET tool release. Immutable arbitrary-content package snapshots, managed workspace status and repack, manifest v1, history, SHA-256 validation, JSON inspection, and ordinary PackageReference consumption.</PackageReleaseNotes>
+    <PackageReleaseNotes>Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dotnet-nuget-content</ToolCommandName>

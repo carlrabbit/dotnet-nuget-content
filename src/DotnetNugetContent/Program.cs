@@ -17,7 +17,7 @@ internal static class Cli
         try
         {
             if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"]) { Console.Out.WriteLine(HelpText); return 0; }
-            if (args is ["--version"] or ["version"]) { Console.Out.WriteLine(typeof(Cli).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"); return 0; }
+            if (args is ["--version"] or ["version"]) { Console.Out.WriteLine(typeof(Cli).Assembly.GetName().Version?.ToString(3) ?? "2.0.0"); return 0; }
             if (args[0] == "workspace") return await ProjectWorkspace.RunAsync(args[1..]);
             var options = ParseOptions(args[1..]);
             switch (args[0])
@@ -75,7 +75,7 @@ internal static class Cli
     private static void EnsureOptions(Dictionary<string, string> d, params string[] allowed) { var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal)); if (bad is not null) throw new CliException($"Unknown option '--{bad}'."); }
     private static void EnsureExclusive(Dictionary<string, string> d, string first, string second) { if (d.ContainsKey(first) && d.ContainsKey(second)) throw new CliException($"Options '--{first}' and '--{second}' cannot be used together."); }
     private const string HelpText = """
-        dotnet-nuget-content — immutable NuGet packages for arbitrary files
+        dotnet-nuget-content 2.0.0 — immutable NuGet packages for arbitrary files (Windows x64 only)
 
         Usage:
           dotnet-nuget-content --help

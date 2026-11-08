@@ -2,14 +2,14 @@
 
 Create **immutable NuGet packages containing arbitrary files**—datasets, test fixtures and external tools. Each version is a complete snapshot, with SHA-256 file inventory and descriptive change history. Generated packages work with ordinary .NET `PackageReference` consumers.
 
-**Windows x64 only.** Distributed exclusively as a NuGet .NET tool. The Native AOT executable needs no installed managed runtime; installation requires the .NET CLI/SDK.
+**Version 2.0.0; Windows x64 only.** Distributed exclusively as a NuGet .NET tool with a matching `dotnet-nuget-content.win-x64` Native AOT package. The executable needs no installed managed runtime; installation requires the .NET CLI/SDK. Content-package versions in the examples below are separate from the tool version.
 
 ## Install
 
 After publication to NuGet.org:
 
 ```powershell
-dotnet tool install --global dotnet-nuget-content --version 1.0.0
+dotnet tool install --global dotnet-nuget-content --version 2.0.0
 dotnet-nuget-content --version
 ```
 
@@ -17,7 +17,7 @@ For local use in a repository:
 
 ```powershell
 dotnet new tool-manifest
-dotnet tool install dotnet-nuget-content --version 1.0.0
+dotnet tool install dotnet-nuget-content --version 2.0.0
 dotnet tool run dotnet-nuget-content -- --version
 ```
 

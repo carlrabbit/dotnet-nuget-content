@@ -1,11 +1,13 @@
+param([string] $CandidateDirectory)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src/DotnetNugetContent/DotnetNugetContent.csproj'
 $runId = [guid]::NewGuid().ToString('N')
-$publishDirectory = Join-Path $repoRoot "artifacts/native validation $runId"
-$executable = Join-Path $publishDirectory 'dotnet-nuget-content.exe'
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "dotnet nuget native validation $runId"
+$publishDirectory = Join-Path $work 'native publish'
+$executable = Join-Path $publishDirectory 'dotnet-nuget-content.exe'
 
 function Invoke-CapturedProcess([string] $FilePath, [string[]] $Arguments, [string] $WorkingDirectory) {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -46,19 +48,37 @@ function Add-ZipTextEntry([System.IO.Compression.ZipArchive] $Archive, [string] 
 try {
     New-Item -ItemType Directory -Force -Path $publishDirectory, $work | Out-Null
 
-    $publish = Invoke-CapturedProcess 'dotnet' @(
-        'publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $publishDirectory
-    )
-    if ($publish.Stdout) { Write-Output $publish.Stdout.TrimEnd() }
-    if ($publish.Stderr) { [Console]::Error.WriteLine($publish.Stderr.TrimEnd()) }
-    if ($publish.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-        throw "Fresh Native AOT publish failed with exit code $($publish.ExitCode)."
+    New-Item -ItemType Directory -Force -Path $publishDirectory, $work | Out-Null
+    if ($CandidateDirectory) {
+        $candidateRoot = (Resolve-Path -LiteralPath $CandidateDirectory).Path
+        $ridPackage = Join-Path $candidateRoot 'dotnet-nuget-content.win-x64.2.0.0.nupkg'
+        if (-not (Test-Path -LiteralPath $ridPackage -PathType Leaf)) { throw "Candidate RID package is missing: $ridPackage" }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($ridPackage)
+        try {
+            $nativeEntry = $archive.GetEntry('tools/any/win-x64/dotnet-nuget-content.exe')
+            if (-not $nativeEntry) { throw 'Candidate RID package has no win-x64 Native AOT executable.' }
+            $entryStream = $nativeEntry.Open()
+            $targetStream = [System.IO.File]::Open($executable, [System.IO.FileMode]::CreateNew)
+            try { $entryStream.CopyTo($targetStream) } finally { $targetStream.Dispose(); $entryStream.Dispose() }
+        } finally { $archive.Dispose() }
+        Write-Output "Using exact candidate RID package: $ridPackage"
+        Write-Output "Candidate RID package SHA-256: $((Get-FileHash -LiteralPath $ridPackage -Algorithm SHA256).Hash)"
+    } else {
+        $publish = Invoke-CapturedProcess 'dotnet' @(
+            'publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $publishDirectory
+        )
+        if ($publish.Stdout) { Write-Output $publish.Stdout.TrimEnd() }
+        if ($publish.Stderr) { [Console]::Error.WriteLine($publish.Stderr.TrimEnd()) }
+        if ($publish.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            throw "Fresh Native AOT publish failed with exit code $($publish.ExitCode)."
+        }
     }
 
     $help = Invoke-Native @('--help')
     if ($help.ExitCode -ne 0 -or $help.Stderr -ne '' -or $help.Stdout -notmatch '(?m)^Usage:') { throw 'Native --help did not return usage on stdout with exit 0 and empty stderr.' }
     $version = Invoke-Native @('--version')
-    Assert-NativeResult $version 0 "1.0.0$([Environment]::NewLine)" '' 'Native --version'
+    Assert-NativeResult $version 0 "2.0.0$([Environment]::NewLine)" '' 'Native --version'
     $unknown = Invoke-Native @('no-such-command')
     if ($unknown.ExitCode -ne 2 -or $unknown.Stdout -ne '' -or $unknown.Stderr -notmatch "^error: Unknown command 'no-such-command'\.") { throw 'Unknown command did not return the documented usage error on stderr with exit 2.' }
     $badOptions = Invoke-Native @('pack', '--id', 'sample')
