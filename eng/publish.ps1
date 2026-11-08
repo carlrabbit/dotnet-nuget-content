@@ -2,6 +2,7 @@
 param(
     [Parameter(ParameterSetName = 'Prepare')][switch] $Prepare,
     [Parameter(ParameterSetName = 'Prepare')][string] $OutputDirectory,
+    [Parameter(ParameterSetName = 'Prepare')][string] $ExpectedReleaseCommit,
     [Parameter(ParameterSetName = 'Publish', Mandatory = $true)][switch] $Publish,
     [Parameter(ParameterSetName = 'Test')][switch] $TestPublish,
     [Parameter(ParameterSetName = 'Publish', Mandatory = $true)][string] $CandidateDirectory,
@@ -34,7 +35,27 @@ function Get-PackageIdentity([string] $Path) {
     } finally { $archive.Dispose() }
 }
 
-function Get-QualifiedCandidate([string] $Path) {
+function Get-CurrentSourceIdentity {
+    $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the current Git revision.' }
+    $tree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+    if ($LASTEXITCODE -ne 0 -or $tree -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the current Git source tree.' }
+    $branch = (& git -C $repoRoot branch --show-current).Trim()
+    $dirty = [bool](& git -C $repoRoot status --porcelain)
+    return [pscustomobject]@{ Commit = $commit; Tree = $tree; Branch = $branch; WorkingTreeClean = -not $dirty }
+}
+
+function Assert-ReleaseCommitIdentity($Manifest, $CurrentIdentity) {
+    if ($Manifest.expectedReleaseCommit -notmatch '^[0-9a-f]{40}$') { throw 'Final release qualification requires an explicit full expected release commit SHA.' }
+    if ($Manifest.sourceCommit -cne $Manifest.expectedReleaseCommit -or $Manifest.actualCommit -cne $Manifest.expectedReleaseCommit -or $CurrentIdentity.Commit -cne $Manifest.expectedReleaseCommit) {
+        throw 'Expected, reported, and current Git commit identities must match exactly.'
+    }
+    if ($Manifest.sourceTree -notmatch '^[0-9a-f]{40}$' -or $CurrentIdentity.Tree -cne $Manifest.sourceTree) { throw 'Candidate source-tree provenance does not match the current expected commit.' }
+    if ($Manifest.sourceBranch -cne 'main' -or $CurrentIdentity.Branch -cne 'main') { throw 'Final release qualification and publication require the current main branch.' }
+    if ($Manifest.workingTreeClean -ne $true -or $CurrentIdentity.WorkingTreeClean -ne $true) { throw 'Final release qualification and publication require a clean working tree.' }
+}
+
+function Get-QualifiedCandidate([string] $Path, $CurrentIdentity = $null) {
     $root = [System.IO.Path]::GetFullPath($Path)
     $manifestPath = Join-Path $root 'candidate.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Candidate manifest not found: $manifestPath" }
@@ -42,11 +63,13 @@ function Get-QualifiedCandidate([string] $Path) {
     if ($manifest.schemaVersion -ne 2 -or $manifest.qualified -ne $true -or $manifest.releaseQualified -ne $true -or $manifest.version -ne $version -or $manifest.sourceCommit -notmatch '^[0-9a-f]{40}$' -or $manifest.sourceTree -notmatch '^[0-9a-f]{40}$' -or $manifest.workingTreeClean -ne $true) {
         throw 'Candidate report is not qualified for the required final merged-source 2.0.0 release.'
     }
-    if ($manifest.sourceBranch -cne 'main' -or $manifest.qualificationScope -cne 'final-merged-main') { throw 'Only a candidate prepared from clean main is eligible for publication.' }
+    if (-not $CurrentIdentity) { $CurrentIdentity = Get-CurrentSourceIdentity }
+    Assert-ReleaseCommitIdentity $manifest $CurrentIdentity
+    if ($manifest.qualificationScope -cne 'final-merged-main') { throw 'Only an explicitly qualified final merged main candidate is eligible for publication.' }
     if ($manifest.published -ne $false) { throw 'Candidate report does not establish an unpublished release candidate.' }
     if ($manifest.licenseReview.passed -ne $true) { throw 'Candidate does not contain a passing repository license/identity review.' }
-    $gates = @($manifest.validation.installedTool, $manifest.validation.native, $manifest.validation.repositoryScale, $manifest.validation.publicationMocks, $manifest.validation.dependencyAudit)
-    if ($gates.Count -ne 5) { throw 'Candidate report must contain installed-tool, native, scale, dependency-audit, and publication-mock receipts.' }
+    $gates = @($manifest.validation.regressionTests, $manifest.validation.installedTool, $manifest.validation.native, $manifest.validation.repositoryScale, $manifest.validation.publicationMocks, $manifest.validation.dependencyAudit)
+    if ($gates.Count -ne 6) { throw 'Candidate report must contain regression, installed-tool, native, scale, dependency-audit, and publication-mock receipts.' }
     foreach ($gate in $gates) {
         if ($gate.passed -ne $true -or -not $gate.log -or -not $gate.sha256) { throw 'Candidate report is missing a passing validation receipt.' }
         $logPath = Join-Path $root $gate.log
@@ -145,12 +168,16 @@ function Invoke-MockPublicationChecks {
             [pscustomobject]@{ role = 'top-level'; id = $topId; version = $version; file = $topFile; sha256 = (Get-FileHash (Join-Path $testRoot $topFile) -Algorithm SHA256).Hash },
             [pscustomobject]@{ role = 'rid'; id = $ridId; version = $version; file = $ridFile; sha256 = (Get-FileHash (Join-Path $testRoot $ridFile) -Algorithm SHA256).Hash }
         )
-        foreach ($receipt in @('installed.log', 'native.log', 'scale.log', 'dependencies.log', 'mocks.log', 'scale-report.json')) { [System.IO.File]::WriteAllText((Join-Path $testRoot $receipt), "$receipt passed") }
+        foreach ($receipt in @('regression.log', 'installed.log', 'native.log', 'scale.log', 'dependencies.log', 'mocks.log', 'scale-report.json')) { [System.IO.File]::WriteAllText((Join-Path $testRoot $receipt), "$receipt passed") }
+        $mockCommit = 'a' * 40
+        $mockTree = 'b' * 40
+        $mockCurrentIdentity = [pscustomobject]@{ Commit = $mockCommit; Tree = $mockTree; Branch = 'main'; WorkingTreeClean = $true }
         $report = [pscustomobject]@{
             schemaVersion = 2; qualified = $true; releaseQualified = $true; qualificationScope = 'final-merged-main'
-            version = $version; sourceCommit = ('a' * 40); sourceTree = ('b' * 40); sourceBranch = 'main'; workingTreeClean = $true; published = $false
+            version = $version; sourceCommit = $mockCommit; actualCommit = $mockCommit; expectedReleaseCommit = $mockCommit; sourceTree = $mockTree; sourceBranch = 'main'; workingTreeClean = $true; published = $false
             licenseReview = @{ passed = $true }
             validation = @{
+                regressionTests = @{ passed = $true; log = 'regression.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'regression.log') -Algorithm SHA256).Hash }
                 installedTool = @{ passed = $true; log = 'installed.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'installed.log') -Algorithm SHA256).Hash }
                 native = @{ passed = $true; log = 'native.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'native.log') -Algorithm SHA256).Hash }
                 repositoryScale = @{ passed = $true; log = 'scale.log'; sha256 = (Get-FileHash (Join-Path $testRoot 'scale.log') -Algorithm SHA256).Hash; report = 'scale-report.json'; reportSha256 = (Get-FileHash (Join-Path $testRoot 'scale-report.json') -Algorithm SHA256).Hash }
@@ -160,7 +187,64 @@ function Invoke-MockPublicationChecks {
             packages = $packages
         }
         $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
-        $candidate = Get-QualifiedCandidate $testRoot
+        # A final main candidate with a matching operator-supplied SHA and all passing receipts is accepted.
+        Assert-ReleaseCommitIdentity $report $mockCurrentIdentity
+        $candidate = Get-QualifiedCandidate $testRoot $mockCurrentIdentity
+
+        # Feature-branch evidence remains preliminary and cannot become publishable by setting report flags.
+        $preliminary = $report | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        $preliminary.sourceBranch = 'codex/feature'
+        $preliminary.qualified = $false; $preliminary.releaseQualified = $false; $preliminary.qualificationScope = 'preliminary-implementation-branch'
+        $preliminary.expectedReleaseCommit = $null
+        $preliminaryIdentity = [pscustomobject]@{ Commit = $mockCommit; Tree = $mockTree; Branch = 'codex/feature'; WorkingTreeClean = $true }
+        $rejected = $false
+        try { Assert-ReleaseCommitIdentity $preliminary $preliminaryIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A preliminary feature-branch candidate was accepted for final qualification.' }
+
+        # Omitted and mismatched expected SHAs cannot qualify; a dirty worktree is independently rejected.
+        foreach ($case in @(
+            @{ Expected = $null; Commit = $mockCommit; Branch = 'main'; Clean = $true },
+            @{ Expected = ('c' * 40); Commit = $mockCommit; Branch = 'main'; Clean = $true },
+            @{ Expected = $mockCommit; Commit = $mockCommit; Branch = 'main'; Clean = $false }
+        )) {
+            $identityManifest = $report | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+            $identityManifest.expectedReleaseCommit = $case.Expected
+            $identityIdentity = [pscustomobject]@{ Commit = $case.Commit; Tree = $mockTree; Branch = $case.Branch; WorkingTreeClean = $case.Clean }
+            $rejected = $false
+            try { Assert-ReleaseCommitIdentity $identityManifest $identityIdentity } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Missing/mismatched expected SHA or dirty worktree was accepted for final qualification.' }
+        }
+
+        # Candidate metadata claiming main cannot override the current local branch/commit identity.
+        $metadataBypassIdentity = [pscustomobject]@{ Commit = $mockCommit; Tree = $mockTree; Branch = 'codex/feature'; WorkingTreeClean = $true }
+        $rejected = $false
+        try { Get-QualifiedCandidate $testRoot $metadataBypassIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Candidate metadata bypassed current branch and expected-commit checks.' }
+
+        # Regression evidence is mandatory and bound to the exact candidate receipt hash.
+        $regressionGate = $report.validation.regressionTests
+        $report.validation.Remove('regressionTests')
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
+        $rejected = $false
+        try { Get-QualifiedCandidate $testRoot $mockCurrentIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A candidate without a regression receipt was accepted.' }
+        $report.validation['regressionTests'] = $regressionGate
+        $report.validation.regressionTests.passed = $false
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
+        $rejected = $false
+        try { Get-QualifiedCandidate $testRoot $mockCurrentIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A candidate with a failed regression receipt was accepted.' }
+        $report.validation.regressionTests.passed = $true
+        $report.validation.regressionTests.sha256 = (Get-FileHash (Join-Path $testRoot 'regression.log') -Algorithm SHA256).Hash
+        [System.IO.File]::AppendAllText((Join-Path $testRoot 'regression.log'), 'tampered')
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
+        $rejected = $false
+        try { Get-QualifiedCandidate $testRoot $mockCurrentIdentity } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A tampered regression receipt was accepted.' }
+        [System.IO.File]::WriteAllText((Join-Path $testRoot 'regression.log'), 'regression.log passed')
+        $report.validation.regressionTests.sha256 = (Get-FileHash (Join-Path $testRoot 'regression.log') -Algorithm SHA256).Hash
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $testRoot 'candidate.json') -Encoding utf8
+        $candidate = Get-QualifiedCandidate $testRoot $mockCurrentIdentity
         $trace = [System.Collections.Generic.List[string]]::new()
         $complete = Invoke-PublishSequence $candidate { param($path, $id, $hash) $trace.Add($id) }
         if (($complete -join ',') -ne "$ridId,$topId" -or ($trace -join ',') -ne "$ridId,$topId") { throw 'Mock publish order did not push the RID package before the pointer.' }
@@ -218,7 +302,7 @@ function Invoke-MockPublicationChecks {
         foreach ($receipt in Get-ChildItem -LiteralPath $testRoot -File -Recurse | Where-Object { $_.Extension -in @('.json', '.log') }) {
             if ([System.IO.File]::ReadAllText($receipt.FullName).Contains($secretSentinel, [StringComparison]::Ordinal)) { throw 'Mock publication persisted synthetic API-key material.' }
         }
-        $mockOutput = 'Mock publication checks passed: default/prepare are non-publishing; RID-first ordering, both first- and second-push failure states, wrong feed, missing approval, and hash tampering are rejected or recorded.'
+        $mockOutput = 'Mock publication checks passed: regression receipt missing/failed/tampered cases, final commit identity, preliminary branch rejection, clean main requirement, default/prepare non-publishing, RID-first order, partial failure states, approval/feed controls, hash tampering, and secret non-disclosure.'
         if ($mockOutput.Contains($secretSentinel, [StringComparison]::Ordinal)) { throw 'Mock publication output leaked synthetic API-key material.' }
         Write-Output $mockOutput
     } finally {
@@ -252,8 +336,17 @@ if (& git -C $repoRoot status --porcelain) { throw 'Candidate build requires a c
 $sourceBranch = (& git -C $repoRoot branch --show-current).Trim()
 $sourceTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceTree -notmatch '^[0-9a-f]{40}$') { throw 'Unable to identify the Git source tree.' }
-$releaseQualified = $sourceBranch -ceq 'main'
-$qualificationScope = if ($releaseQualified) { 'final-merged-main' } else { 'preliminary-implementation-branch' }
+$actualCommit = $sourceCommit
+$releaseQualified = $false
+$expectedCommit = $null
+if (-not [string]::IsNullOrWhiteSpace($ExpectedReleaseCommit)) {
+    if ($ExpectedReleaseCommit -notmatch '^[0-9a-f]{40}$') { throw 'ExpectedReleaseCommit must be a full lowercase 40-character Git commit SHA.' }
+    if ($ExpectedReleaseCommit -cne $actualCommit) { throw 'Expected release commit does not match current HEAD.' }
+    if ($sourceBranch -cne 'main') { throw 'Expected-release-commit qualification is only allowed on main.' }
+    $expectedCommit = $ExpectedReleaseCommit
+    $releaseQualified = $true
+}
+$qualificationScope = if ($releaseQualified) { 'final-merged-main' } elseif ($sourceBranch -ceq 'main') { 'preliminary-main-without-expected-commit' } else { 'preliminary-implementation-branch' }
 $candidateRoot = if ($OutputDirectory) { [System.IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoRoot "artifacts/release-candidate-$version-$sourceCommit" }
 if (Test-Path -LiteralPath $candidateRoot) { throw "Candidate directory already exists and will not be overwritten: $candidateRoot" }
 $sdkVersion = (& dotnet --version).Trim()
@@ -264,6 +357,9 @@ $compilerPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStud
 if (-not $compilerPath -or -not (Test-Path -LiteralPath $compilerPath)) { throw 'The existing MSVC x64 compiler is unavailable; Native AOT prerequisites were not installed.' }
 New-Item -ItemType Directory -Path $candidateRoot | Out-Null
 try {
+    $regressionOutput = & dotnet test (Join-Path $repoRoot 'DotnetNugetContent.sln') -c Release --no-restore 2>&1
+    $regressionOutput | Set-Content -LiteralPath (Join-Path $candidateRoot 'regression-tests.log') -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw 'Complete Release regression suite failed. See regression-tests.log; candidate qualification is blocked.' }
     & dotnet pack $project -c Release --no-restore "-p:Version=$version" -o $candidateRoot
     if ($LASTEXITCODE -ne 0) { throw 'Top-level pointer package build failed.' }
     & dotnet pack $project -c Release -r win-x64 --no-restore "-p:Version=$version" -o $candidateRoot
@@ -311,11 +407,13 @@ try {
     )
     $report = [ordered]@{
         schemaVersion = 2; qualified = $releaseQualified; releaseQualified = $releaseQualified; qualificationScope = $qualificationScope
-        version = $version; sourceCommit = $sourceCommit; sourceTree = $sourceTree; sourceBranch = $sourceBranch; workingTreeClean = $true
-        sourceRepository = 'https://github.com/carlrabbit/dotnet-nuget-content'; command = 'pwsh -NoProfile -File eng/publish.ps1 -Prepare'
+        version = $version; sourceCommit = $sourceCommit; actualCommit = $actualCommit; expectedReleaseCommit = $expectedCommit
+        sourceTree = $sourceTree; sourceBranch = $sourceBranch; workingTreeClean = $true
+        sourceRepository = 'https://github.com/carlrabbit/dotnet-nuget-content'; command = if ($expectedCommit) { "pwsh -NoProfile -File eng/publish.ps1 -Prepare -ExpectedReleaseCommit $expectedCommit" } else { 'pwsh -NoProfile -File eng/publish.ps1 -Prepare' }
         preparedUtc = [DateTime]::UtcNow.ToString('o'); toolchain = $toolchain; packages = $packages
         licenseReview = $licenseReview
         validation = [ordered]@{
+            regressionTests = [ordered]@{ passed = $true; log = 'regression-tests.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'regression-tests.log') -Algorithm SHA256).Hash }
             installedTool = [ordered]@{ passed = $true; log = 'installed-tool-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'installed-tool-validation.log') -Algorithm SHA256).Hash }
             native = [ordered]@{ passed = $true; log = 'native-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'native-validation.log') -Algorithm SHA256).Hash }
             repositoryScale = [ordered]@{ passed = $true; log = 'repository-scale-validation.log'; sha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'repository-scale-validation.log') -Algorithm SHA256).Hash; report = 'repository-scale-report.json'; reportSha256 = (Get-FileHash -LiteralPath (Join-Path $candidateRoot 'repository-scale-report.json') -Algorithm SHA256).Hash }
@@ -328,8 +426,9 @@ try {
     $checklist = @"
 # Manual publication checklist — dotnet-nuget-content 2.0.0
 
+- Verify actualCommit, expectedReleaseCommit, sourceTree, and the full Release regression receipt match this local clean main checkout. Preliminary candidates are never publishable.
 - Review candidate.json and both SHA-256 values. Do not rebuild.
-- Confirm this is a final-merged-main candidate and review installed-tool, native, 100-project scale, dependency, consumer and publication-mock logs.
+- Confirm this is a final-merged-main candidate and review regression, installed-tool, native, 100-project scale, dependency, consumer and publication-mock logs.
 - Confirm the repository owner has approved publication rights and NuGet.org identity.
 - Supply NUGET_API_KEY from an external secure source at invocation time.
 - Run eng/publish.ps1 -Publish -CandidateDirectory <this directory> -Source https://api.nuget.org/v3/index.json -Confirmation 'PUBLISH TO NUGET.ORG'.
