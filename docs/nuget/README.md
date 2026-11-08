@@ -36,11 +36,11 @@ The `./working-copy` directory created by `unpack` is already editable—**no ex
 ```powershell
 Set-Content -LiteralPath ./working-copy/example.txt -Value 'Updated content'
 dotnet nuget-content pack --source ./working-copy --minor --output ./feed/example.assets.1.1.0.nupkg
-dotnet nuget-content status --source ./working-copy
-dotnet nuget-content history --source ./working-copy
+# The editable ./working-copy is removed after successful pack.
+dotnet nuget-content history --package ./feed/example.assets.1.1.0.nupkg
 ```
 
-Without `--output`, the new immutable package is written beside the editable directory. Successful ordinary managed `pack` atomically advances that directory's `.nuget-content/manifest.json` to the exact manifest in the new package. The directory and user files stay in place, `status` becomes clean, and another edit followed by `pack --patch` advances from that new baseline. Existing package paths are never overwritten. If package creation fails, the old baseline and user files remain. If the package was published but baseline replacement fails, the command reports the partial outcome, package path, both versions, and non-destructive recovery guidance; it does not claim cross-artifact atomicity.
+Without `--output`, the new package is written beside the extracted directory. A successful managed `pack` verifies the new package and **removes the extracted working directory**. Failed package creation leaves the directory available. If cleanup fails, the published package is retained and the remaining extraction must be inspected. Unpack the new package again for further edits; do not run pack from inside the directory on Windows when another process may hold it open.
 
 The installed `dotnet-nuget-content` tool and the generated `example.assets` content package are **different NuGet packages**. To consume `example.assets` in a .NET project:
 
@@ -66,19 +66,20 @@ dotnet nuget-content workspace unpack --alias fixtures
 # Edit ./content/fixtures/example.txt in place.
 Set-Content -LiteralPath ./content/fixtures/example.txt -Value 'Workspace update'
 dotnet nuget-content workspace status --alias fixtures --json
-# Package changes without changing this member baseline or its root pin.
-dotnet nuget-content workspace pack --alias fixtures --patch
+# Create the new version, advance the pin and remove the temporary extraction.
 dotnet nuget-content workspace advance --alias fixtures --patch
 dotnet nuget-content workspace inspect --alias fixtures --json
+# Unpack the new pinned package only when you want to edit again.
+dotnet nuget-content workspace unpack --alias fixtures
 dotnet nuget-content workspace usage --all --json
 ```
 
-Workspace package inputs must already be under the selected project root. The tool does not restore feeds or change project references. The operations are intentionally distinct: ordinary managed `pack --source DIR --patch` advances that directory's baseline; `workspace pack --alias NAME --patch` creates a package but preserves the registered member baseline and root pin; `workspace advance --alias NAME --patch` preserves the old directory and baseline, creates a new clean work copy, then atomically moves that member's pin. No manual file copy is needed. The previous work copy and package remain. `workspace inspect --all` reports observed pin/workspace state, consumer declaration drift, and eligible older sibling candidates. Cleanup previews by default; `workspace cleanup --alias NAME --directory REL --apply` removes only that explicitly named clean obsolete sibling. Modified copies and package files are preserved. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md) and [M0007 lifecycle contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0007-workspace-lifecycle.md).
+Workspace package inputs must exist under the selected project root; no feed restore is performed. `workspace advance` creates the immutable package, updates its member pin, then removes the edited extraction without creating a second working copy. The same directory path is reused when the next `workspace unpack` is requested. Other members remain unchanged. `workspace pack` remains an explicit staging-only command: it writes a package but leaves the member's pin and extraction untouched. Ordinary `pack` removes its managed extraction without updating any project marker and should not be used directly on registered member directories. `workspace inspect` reports the active directory as missing until unpacked. Cleanup of obsolete historical sibling directories remains preview-first through `workspace cleanup`. See the [workspace contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0005-project-workspace.md) and [M0007 lifecycle contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0007-workspace-lifecycle.md).
 
 [Complete documentation and source](https://github.com/carlrabbit/dotnet-nuget-content)
 
 ## Relative versions and consumer references
 
-Managed `pack` and `workspace pack` accept exactly one of `--version VERSION`, `--major`, `--minor`, or `--patch`. Relative increments require a stable three-number baseline. Initial package creation with `pack --id` continues to require `--version`. Ordinary managed `pack` advances its baseline after package publication; `workspace pack` preserves its member baseline and pin.
+Managed `pack` and `workspace pack` accept exactly one of `--version VERSION`, `--major`, `--minor`, or `--patch`. Relative increments require a stable three-number baseline. Initial package creation with `pack --id` continues to require `--version`. Ordinary managed `pack` removes the extracted directory after package verification; `workspace pack` preserves the member baseline and pin and does not delete; `workspace advance` updates the pin and removes the extraction.
 
 `workspace references update --alias NAME` previews local consuming project reference edits. It defaults to the pinned package version; an explicit `--version` must match exactly one valid registered workspace package for the same package ID. Pass `--apply` to write supported literal direct `PackageReference` and central `PackageVersion` declarations. Ambiguous, dynamic, conditional, imported or malformed declarations block updates. This command does not restore, publish or modify NuGet sources. Configure an isolated local source and restore/build separately. See the [M0006 contract](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0006-versions-and-consumers.md) and [JSON schema](https://github.com/carlrabbit/dotnet-nuget-content/blob/main/docs/specs/M0006-reference-update.schema.json).
