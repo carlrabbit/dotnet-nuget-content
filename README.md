@@ -10,7 +10,7 @@ After publication to NuGet.org:
 
 ```powershell
 dotnet tool install --global dotnet-nuget-content --version 2.0.0
-dotnet-nuget-content --version
+dotnet nuget-content --version
 ```
 
 For local use in a repository:
@@ -18,8 +18,10 @@ For local use in a repository:
 ```powershell
 dotnet new tool-manifest
 dotnet tool install dotnet-nuget-content --version 2.0.0
-dotnet tool run dotnet-nuget-content -- --version
+dotnet nuget-content --version
 ```
+
+The command is **`dotnet nuget-content`** for both global and local installations. The installed tool still has the package ID and executable name `dotnet-nuget-content`; the .NET CLI resolves its `dotnet-` prefix. When a local tool manifest is in scope, that installation is selected. [See .NET tool invocation rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools#invoke-a-local-tool).
 
 ## Quick start
 
@@ -28,21 +30,21 @@ Create a working example in a new, empty directory:
 ```powershell
 New-Item -ItemType Directory -Force ./assets, ./feed | Out-Null
 Set-Content -LiteralPath ./assets/example.txt -Value 'Example content'
-dotnet-nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./feed/example.assets.1.0.0.nupkg
-dotnet-nuget-content unpack --package ./feed/example.assets.1.0.0.nupkg --destination ./working-copy
-dotnet-nuget-content status --source ./working-copy
+dotnet nuget-content pack --id example.assets --version 1.0.0 --source ./assets --output ./feed/example.assets.1.0.0.nupkg
+dotnet nuget-content unpack --package ./feed/example.assets.1.0.0.nupkg --destination ./working-copy
+dotnet nuget-content status --source ./working-copy
 ```
 
-Change a file in `working-copy`, then inspect and create the next version:
+`unpack` creates `./working-copy` as an **editable directory**. No extra copy is needed: edit files there, inspect the changes, and pack a new immutable version:
 
 ```powershell
 Set-Content -LiteralPath ./working-copy/example.txt -Value 'Updated content'
-dotnet-nuget-content status --source ./working-copy --json
-dotnet-nuget-content pack --source ./working-copy --version 1.1.0 --output ./feed/example.assets.1.1.0.nupkg --message "Refresh assets"
-dotnet-nuget-content history --package ./feed/example.assets.1.1.0.nupkg
+dotnet nuget-content status --source ./working-copy --json
+dotnet nuget-content pack --source ./working-copy --version 1.1.0 --output ./feed/example.assets.1.1.0.nupkg --message "Refresh assets"
+dotnet nuget-content history --package ./feed/example.assets.1.1.0.nupkg
 ```
 
-Managed pack without `--output` defaults its output to the **parent of the workspace**. It never updates the workspace baseline. To work on the new version, unpack it into a new directory.
+Managed pack without `--output` writes the new package beside the editable directory. **Current behavior:** `pack` leaves the directory and its `.nuget-content/manifest.json` baseline at the original version; it neither deletes the directory nor refreshes the baseline. To start with a clean baseline for the new version, unpack the new package into a different directory. Project-integrated workspaces can instead use `workspace advance` to create and select the new managed directory automatically.
 
 The generated `example.assets` package is distinct from the `dotnet-nuget-content` tool package. To consume it, create a .NET project and add the generated package using the local `feed` directory:
 
@@ -77,23 +79,28 @@ Content files preserve relative paths and are copied to output. The `.nuget-cont
 | `pack --version VERSION [--source DIR] [--output FILE] [--message TEXT]` | Create next immutable snapshot |
 | `hash --path FILE [--expect SHA256]` | Hash/check a file |
 
-Run `dotnet-nuget-content --help` for full syntax. Managed commands use the exact current directory when `--source` is omitted; they do not search parent directories. Existing packages and extraction destinations are never overwritten. JSON output is available for `status` and `history`; consult [the JSON contract](docs/specs/M0003-cli-json.md).
+Run `dotnet nuget-content --help` for full syntax. Managed commands use the exact current directory when `--source` is omitted; they do not search parent directories. Existing packages and extraction destinations are never overwritten. JSON output is available for `status` and `history`; consult [the JSON contract](docs/specs/M0003-cli-json.md).
 
 ## Project-integrated package workspaces
 
 A repository can coordinate several independent content packages with a checked-in `nuget-content.json`. Start in the project root. Package files are local, pinned inputs; the tool does not restore or download them.
 
 ```powershell
-dotnet-nuget-content workspace init
-dotnet-nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
-dotnet-nuget-content workspace add --alias tools --package ./feed/example.tools.2.0.0.nupkg
-dotnet-nuget-content workspace list --json
-dotnet-nuget-content workspace unpack --all
-dotnet-nuget-content workspace status --all --json
-dotnet-nuget-content workspace usage --all --json
+dotnet nuget-content workspace init
+dotnet nuget-content workspace add --alias fixtures --package ./feed/example.assets.1.1.0.nupkg
+dotnet nuget-content workspace unpack --alias fixtures
+
+# Edit the unpacked directory directly — no separate copy.
+Set-Content -LiteralPath ./content/fixtures/example.txt -Value 'Another update'
+dotnet nuget-content workspace status --alias fixtures --json
+
+# Create 1.1.1, unpack a clean new working copy, and advance this alias.
+dotnet nuget-content workspace advance --alias fixtures --patch
+dotnet nuget-content workspace inspect --alias fixtures --json
+dotnet nuget-content workspace usage --all --json
 ```
 
-Each alias has its own managed directory under `content/` by default. To package edits, create a new clean work copy, and move that alias's pin in one coordinated operation, use `workspace advance --alias fixtures --patch` (or `--version`, `--minor`, or `--major`). The old working copy and package remain. A pre-commit failure keeps the old pin and reports any new package or directory so you can recover without overwriting it. `workspace inspect --all --json` shows member state, locally observed consumer version drift, and proven older sibling candidates. `workspace cleanup --alias fixtures --directory content/fixtures-old` is a preview; add `--apply` to remove that one target only when it is a clean, lower-version managed sibling. Modified work copies and package files are preserved. Usage discovery examines local project declarations and optional previous `project.assets.json` evidence without running restore. See the [workspace contracts](docs/specs/M0005-project-workspace.md) and [M0007 lifecycle/JSON contracts](docs/specs/M0007-workspace-lifecycle.md).
+The unpacked `content/fixtures` folder is the editable work area: edit its files directly. `workspace advance` packages those edits, materializes a new clean directory (for this example, `content/fixtures-1.1.1`), and updates the selected alias's pin. Continue editing in the newly selected directory. Nothing must be copied manually. Add other package aliases independently as needed. The earlier working directory and package remain. A pre-commit failure keeps the old pin and reports any new package or directory so you can recover without overwriting it. `workspace inspect --all --json` shows member state, locally observed consumer version drift, and proven older sibling candidates. `workspace cleanup --alias fixtures --directory content/fixtures-old` is a preview; add `--apply` to remove that one target only when it is a clean, lower-version managed sibling. Modified work copies and package files are preserved. Usage discovery examines local project declarations and optional previous `project.assets.json` evidence without running restore. See the [workspace contracts](docs/specs/M0005-project-workspace.md) and [M0007 lifecycle/JSON contracts](docs/specs/M0007-workspace-lifecycle.md).
 
 Exit codes: 0 success; 1 operation/integrity failure; 2 usage error. Errors go to stderr.
 
@@ -117,10 +124,10 @@ See [product specification](docs/SPECS.md), [engineering contract](docs/ENGINEER
 For a managed workspace, choose a stable version increment from its baseline:
 
 ```powershell
-dotnet-nuget-content pack --source ./working-copy --patch
+dotnet nuget-content pack --source ./working-copy --patch
 # or: --minor / --major
 
-dotnet-nuget-content workspace pack --alias fixtures --patch
+dotnet nuget-content workspace pack --alias fixtures --patch
 ```
 
 `--version VERSION` remains available, and initial `pack --id ...` still requires an explicit version. Relative increments require a stable three-number baseline and never update the workspace marker or project pin.
@@ -128,10 +135,10 @@ dotnet-nuget-content workspace pack --alias fixtures --patch
 To synchronize local consuming projects, preview first:
 
 ```powershell
-dotnet-nuget-content workspace references update --alias fixtures --json
+dotnet nuget-content workspace references update --alias fixtures --json
 # use --version VERSION only when exactly one registered package is valid locally
 # pass --apply to make the supported XML edits
-dotnet-nuget-content workspace references update --alias fixtures --apply
+dotnet nuget-content workspace references update --alias fixtures --apply
 ```
 
 The default target is the pinned version. Preview makes no changes. Apply updates supported literal direct `PackageReference` and effective central `PackageVersion` declarations, and blocks uncertain or malformed declarations. It does not restore packages or edit NuGet sources. Configure a local package source and restore/build consumers separately. The versioned result contract is documented in [M0006](docs/specs/M0006-versions-and-consumers.md) and [its JSON schema](docs/specs/M0006-reference-update.schema.json).
