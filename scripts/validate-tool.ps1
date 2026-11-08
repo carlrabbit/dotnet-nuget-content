@@ -111,7 +111,7 @@ function Assert-ReleaseMetadata([System.IO.Compression.ZipArchive] $Archive, [st
         license = 'Unlicense'
         projectUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
         repositoryUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
-        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
+        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, disposable unpack/edit/pack workspaces, managed multi-package workspaces with explicit pinning, bounded local usage discovery, consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
     }
     foreach ($name in $expected.Keys) {
         $actual = switch ($name) {
@@ -293,6 +293,7 @@ try {
     [System.IO.File]::WriteAllBytes((Join-Path $source 'nested/payload.bin'), $expectedBinary)
     $created = Invoke-Tool @('pack', '--id', 'sample.installed', '--version', '1.0.0', '--source', $source, '--output', $initialPackage)
     Assert-ToolResult $created 0 'Installed tool initial pack'
+    if (-not (Test-Path -LiteralPath $source -PathType Container) -or [Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $source 'nested/deeper/readme.txt'))) -cne [Convert]::ToHexString($expectedText)) { throw 'Installed initial pack modified or removed its arbitrary source directory.' }
     $unpacked = Invoke-Tool @('unpack', '--package', $initialPackage, '--destination', $workspace)
     Assert-ToolResult $unpacked 0 'Installed tool unpack'
     foreach ($relative in @('nested/deeper/readme.txt', 'nested/payload.bin')) {
@@ -316,6 +317,10 @@ try {
     $textMode = Invoke-Tool @('status', '--source', $workspace)
     Assert-ToolResult $textMode 0 'Text status retention'
     if ($textMode.Stdout -notmatch 'Added: added.json' -or $textMode.Stderr) { throw 'Text status mode no longer reports changes on stdout.' }
+    $managedSourceOracle = Join-Path $work 'independent managed source oracle'
+    New-Item -ItemType Directory -Force -Path (Join-Path $managedSourceOracle 'nested/deeper') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $workspace 'nested/deeper/readme.txt') -Destination (Join-Path $managedSourceOracle 'nested/deeper/readme.txt')
+    Copy-Item -LiteralPath (Join-Path $workspace 'added.json') -Destination (Join-Path $managedSourceOracle 'added.json')
     $conflictingSelectors = Invoke-Tool @('status', '--source', $workspace, '--package', $initialPackage, '--json')
     Assert-ToolResult $conflictingSelectors 2 'Conflicting status selectors'
     if ($conflictingSelectors.Stdout -or $conflictingSelectors.Stderr -notmatch 'cannot be used together') { throw 'Conflicting selectors did not fail cleanly as a usage error.' }
@@ -325,11 +330,16 @@ try {
     $markerBefore = [System.IO.File]::ReadAllBytes($markerPath)
     $repack = Invoke-Tool @('pack', '--source', $workspace, '--version', '1.1.0', '--message', 'installed update', '--output', $managedPackage)
     Assert-ToolResult $repack 0 'Installed tool managed repack'
-    if ([Convert]::ToHexString($markerBefore) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($markerPath))) { throw 'Managed repack changed its baseline marker.' }
+    if (Test-Path -LiteralPath $workspace) { throw 'Managed repack did not remove the extracted working directory.' }
+    Assert-ToolResult (Invoke-Tool @('unpack', '--package', $managedPackage, '--destination', $workspace)) 0 'Unpack new managed version for continued editing'
+    $cleanAfterRepack = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $cleanAfterRepack 0 'Clean workspace after managed repack'
+    $cleanAfterRepackJson = Assert-JsonLine $cleanAfterRepack.Stdout 'Clean workspace after managed repack status'
+    if (-not $cleanAfterRepackJson.clean -or $cleanAfterRepackJson.package.version -ne '1.1.0') { throw 'Managed repack did not leave a clean 1.1.0 baseline.' }
     $workspaceHistory = Invoke-Tool @('history', '--source', $workspace, '--json')
     Assert-ToolResult $workspaceHistory 0 'Workspace history JSON'
     $workspaceHistoryJson = Assert-JsonLine $workspaceHistory.Stdout 'Workspace history'
-    if ($workspaceHistoryJson.package.version -ne '1.0.0' -or $workspaceHistoryJson.history.Count -ne 1 -or $workspaceHistoryJson.history[0].ContainsKey('message')) { throw 'Workspace history JSON does not preserve the baseline chronology or omitted message.' }
+    if ($workspaceHistoryJson.package.version -ne '1.1.0' -or $workspaceHistoryJson.history.Count -ne 2 -or $workspaceHistoryJson.history[0].ContainsKey('message') -or $workspaceHistoryJson.history[1].message -ne 'installed update') { throw 'Workspace history JSON does not reflect the advanced baseline chronology and messages.' }
     $packageHistory = Invoke-Tool @('history', '--package', $managedPackage, '--json')
     Assert-ToolResult $packageHistory 0 'Package history JSON'
     $packageHistoryJson = Assert-JsonLine $packageHistory.Stdout 'Package history'
@@ -344,10 +354,26 @@ try {
     Assert-ToolResult $badStatus 1 'Invalid package JSON status'
     if ($badStatus.Stdout -or -not $badStatus.Stderr.StartsWith('error:')) { throw 'Invalid package JSON status emitted JSON or failed to use stderr.' }
 
-    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $toolShim, '-PackagePath', $managedPackage, '-ExpectedSource', $workspace) $work
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $toolShim, '-PackagePath', $managedPackage, '-ExpectedSource', $managedSourceOracle) $work
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     Assert-ToolResult $consumer 0 'Independent PackageReference consumer'
+
+    $firstManagedPackageHash = (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash
+    [System.IO.File]::WriteAllText((Join-Path $workspace 'repeat.json'), '{"repeat":true}')
+    $repeatedManagedPackage = Join-Path $work 'managed snapshot 1.1.1.nupkg'
+    $repeatedRepack = Invoke-Tool @('pack', '--source', $workspace, '--patch', '--output', $repeatedManagedPackage)
+    Assert-ToolResult $repeatedRepack 0 'Installed tool repeated in-place managed patch'
+    if ((Test-Path -LiteralPath $workspace) -or (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash -cne $firstManagedPackageHash) { throw 'Repeated managed patch failed to remove the extraction or changed the earlier package.' }
+    Assert-ToolResult (Invoke-Tool @('unpack', '--package', $repeatedManagedPackage, '--destination', $workspace)) 0 'Unpack repeated managed version'
+    $repeatedStatus = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $repeatedStatus 0 'Clean workspace after repeated managed patch'
+    $repeatedStatusJson = Assert-JsonLine $repeatedStatus.Stdout 'Repeated managed patch status'
+    if (-not $repeatedStatusJson.clean -or $repeatedStatusJson.package.version -ne '1.1.1') { throw 'Repeated managed patch did not advance the installed tool workspace to clean 1.1.1.' }
+    $repeatedHistory = Invoke-Tool @('history', '--source', $workspace, '--json')
+    Assert-ToolResult $repeatedHistory 0 'History after repeated managed patch'
+    $repeatedHistoryJson = Assert-JsonLine $repeatedHistory.Stdout 'Repeated managed patch history'
+    if ($repeatedHistoryJson.history.Count -ne 3 -or $repeatedHistoryJson.history[0].version -ne '1.0.0' -or $repeatedHistoryJson.history[1].version -ne '1.1.0' -or $repeatedHistoryJson.history[2].version -ne '1.1.1') { throw 'Repeated managed patch did not append the expected installed-tool history.' }
 
     $heavySource = Join-Path $work 'many Unicode files'; $heavyWorkspace = Join-Path $work 'many Unicode unpacked'; $heavyPackage = Join-Path $work 'many Unicode.nupkg'
     $deep = $heavySource
@@ -603,7 +629,16 @@ try {
     $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
     Assert-ToolResult $lifecycleInspect 0 'M0007 inspect after advance'
     $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 inspection result'
-    if ($lifecycleInspection.members[0].state -ne 'clean' -or $lifecycleInspection.members[0].version -ne '1.0.1') { throw 'M0007 inspect did not report the clean advanced pin.' }
+    if ($lifecycleInspection.members[0].state -ne 'missing' -or $lifecycleInspection.members[0].version -ne '1.0.1' -or $lifecycleInspection.members[0].directory -ne 'content/fixtures' -or $lifecycleInspection.members[0].packageFile -ne 'feed/sample.lifecycle.1.0.1.nupkg' -or (Test-Path -LiteralPath $lifecycleOldCopy) -or (Test-Path -LiteralPath (Join-Path $lifecycleRoot 'content/fixtures-1.0.1'))) { throw 'M0007 advance changed the registered path, created a second extraction, or failed to update/clean the selected pin.' }
+    Assert-ToolResult (Invoke-CapturedProcess $installedExe @('workspace', 'unpack', '--alias', 'fixtures', '--workspace', $lifecycleRoot) $work) 0 'M0007 unpack advanced pin for new edits'
+    $lifecycleInspect = Invoke-CapturedProcess $installedExe @('workspace', 'inspect', '--alias', 'fixtures', '--workspace', $lifecycleRoot, '--json') $work
+    Assert-ToolResult $lifecycleInspect 0 'M0007 inspect new extraction'
+    $lifecycleInspection = Assert-JsonLine $lifecycleInspect.Stdout 'M0007 re-unpacked inspection result'
+    if ($lifecycleInspection.members[0].state -ne 'clean') { throw 'M0007 freshly unpacked pin was not clean.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 unpack did not recreate the updated pinned package content at the registered path.' }
+    $advancedHistory = Invoke-CapturedProcess $installedExe @('history', '--package', $lifecycleNext) $work
+    Assert-ToolResult $advancedHistory 0 'M0009 workspace advance package history'
+    if ($advancedHistory.Stdout -notmatch '1.0.0' -or $advancedHistory.Stdout -notmatch '1.0.1') { throw 'M0009 workspace advance package omitted prior or new version history.' }
     if (-not @($lifecycleInspection.members[0].consumers | Where-Object { $_.path -eq 'consumer/Consumer.csproj' -and $_.kind -eq 'direct' -and $_.state -eq 'drift' -and $_.version -eq '1.0.0' }).Count) { throw 'M0007 inspect missed direct consumer version drift.' }
     if (-not @($lifecycleInspection.members[0].candidates | Where-Object { $_.directory -eq 'content/fixtures-clean-old' -and $_.state -eq 'clean' }).Count) { throw 'M0007 inspect did not identify the clean older sibling candidate.' }
     $lifecycleConfig = Join-Path $work 'M0007 lifecycle NuGet.Config'
@@ -623,8 +658,8 @@ try {
     if (-not (Assert-JsonLine $cleanupLifecycle.Stdout 'M0007 cleanup apply result').applied) { throw 'M0007 completed cleanup did not report applied=true.' }
     if (Test-Path -LiteralPath $lifecycleCleanObsolete) { throw 'M0007 cleanup did not remove the approved clean obsolete sibling.' }
     if (-not (Test-Path -LiteralPath $lifecycleInitial) -or (Get-FileHash -LiteralPath $lifecycleInitial -Algorithm SHA256).Hash -ne $lifecycleInitialHash) { throw 'M0007 cleanup changed or removed an immutable package.' }
-    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 advance changed the retained modified old workspace.' }
-    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advanced pin 1.0.1; approved cleanup removed only content/fixtures-clean-old."
+    if ((Get-FileHash -LiteralPath (Join-Path $lifecycleOldCopy 'payload.bin') -Algorithm SHA256).Hash -ne $lifecycleOldWorkHash) { throw 'M0007 new extraction differs from the edited packaged content.' }
+    Write-Output "M0007 installed Native AOT lifecycle passed. Initial package SHA-256: $lifecycleInitialHash; consumer bytes matched independent source; advance updated pin without duplicating extraction; obsolete sibling cleanup remained explicit."
 
     # M0007 EC-07b: observe an actual recursive deletion before terminating the isolated process.
     $interruptRoot = Join-Path $work 'M0007 cleanup interruption root'
@@ -732,8 +767,12 @@ try {
     Write-Output "Installed executable SHA-256: $nativeHash"
     Write-Output "Top-level package SHA-256: $((Get-FileHash -LiteralPath $topPackage -Algorithm SHA256).Hash)"
     Write-Output "win-x64 package SHA-256: $((Get-FileHash -LiteralPath $ridPackage -Algorithm SHA256).Hash)"
+    Write-Output "M0009 managed package SHA-256 ($managedPackage): $((Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash)"
+    Write-Output "M0009 repeated managed package SHA-256 ($repeatedManagedPackage): $((Get-FileHash -LiteralPath $repeatedManagedPackage -Algorithm SHA256).Hash)"
+    Write-Output "M0009 workspace advance package SHA-256 ($lifecycleNext): $((Get-FileHash -LiteralPath $lifecycleNext -Algorithm SHA256).Hash)"
     Write-Output "Longest tested Unicode path length: $($unicodePath.Length) characters"
     Write-Output "Forced termination observed a $stageLengthAtTermination-byte staging file; final path stayed absent; staging remnant after kill: $remainingStage."
+    Write-Output 'M0009 installed workflow passed: pack deleted each extracted directory, re-unpack restored the pinned content, workspace advance preserved its directory setting without creating a second extraction, and independent consumer bytes matched the separate source oracle.'
     Write-Output 'Handled malformed-package failure separately removed its staging directory; installed lifecycle, JSON/text streams, independent consumer byte oracle, 301 files, nested Unicode path, 64 MiB payload, and conflict checks passed.'
 }
 finally {

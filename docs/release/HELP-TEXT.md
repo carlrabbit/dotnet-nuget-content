@@ -17,14 +17,17 @@ Usage:
 
 Workflow:
   First package: pack --id ... --version ... --source ... --output ...
-  Update: unpack into a folder, edit files there, status, pack --patch (or --major/--minor)
+  Update: unpack into a folder, edit files there, pack --patch; extraction removed after success
   Inspect: status and history; add --json for structured output.
 
   Managed status, history and pack use the current directory by default; they
 never search parent directories. Managed pack needs changes and a higher
 version. Relative --major/--minor/--patch use the stable baseline version.
-Without --output it writes beside the workspace, leaving its baseline
-unchanged. Existing output files and extraction destinations are not replaced.
+Without --output it writes beside the extracted directory. Successful ordinary
+managed pack removes that directory after verifying the immutable package.
+Workspace pack stages a package only; workspace advance updates the project
+pin and removes its extracted member directory. Unpack again to edit later.
+Existing output files and extraction destinations are not replaced.
 
 Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
 Errors are written to stderr.

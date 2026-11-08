@@ -276,7 +276,7 @@ internal static class ProjectWorkspace
             var candidate = Path.Combine(Directory.GetParent(dir)?.FullName ?? root, $"{m.PackageId}.{selection.Resolve(m.Version).ToNormalizedString()}.nupkg");
             EnsurePackageOutputOutsideMembers(root, candidate, manifest.Members);
         }
-        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"));
+        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
         Console.WriteLine($"Created {created}"); Console.WriteLine($"Workspace pin remains {m.PackageId} {m.Version}; use 'workspace set --alias {m.Alias} --package <new-package>' to advance it."); return 0;
     }
 
@@ -337,51 +337,71 @@ internal static class ProjectWorkspace
     private static async Task<int> AdvanceAsync(Dictionary<string, string> options)
     {
         Ensure(options, "alias", "version", "major", "minor", "patch", "directory", "output", "message", "workspace");
-        var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (marker, manifest) = await ReadRootAsync(root);
-        var m = FindMember(manifest, Required(options, "alias")); var selection = PackageVersionSelection.FromOptions(options);
+        var root = ResolveRoot(options.GetValueOrDefault("workspace"));
+        var (marker, manifest) = await ReadRootAsync(root);
+        var m = FindMember(manifest, Required(options, "alias"));
+        var selection = PackageVersionSelection.FromOptions(options);
         var currentDir = ResolvePath(root, m.Directory);
-        if (!Directory.Exists(currentDir)) throw new CliException($"Workspace member directory is missing: {m.Directory}", 1);
-        var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(currentDir); VerifyPin(m, baseline);
+        if (!Directory.Exists(currentDir)) throw new CliException($"Workspace member directory is missing: {m.Directory}. Unpack the pinned package before editing.", 1);
+        var baseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(currentDir);
+        VerifyPin(m, baseline);
         var nextVersion = selection.Resolve(m.Version).ToNormalizedString();
-        if (NuGet.Versioning.NuGetVersion.Parse(nextVersion) <= NuGet.Versioning.NuGetVersion.Parse(m.Version)) throw new CliException("New version must be greater than the workspace pin.", 1);
-        var nextDirectory = NormalizeRelative(options.GetValueOrDefault("directory") ??
-            Relative(root, Path.Combine(Directory.GetParent(currentDir)!.FullName, m.Alias + "-" + nextVersion)), "directory");
-        var destination = ResolvePath(root, nextDirectory);
-        if (Directory.Exists(destination) || File.Exists(destination)) throw new CliException($"Advance directory already exists: {nextDirectory}", 1);
-        if (manifest.Members.Any(x => PathRelated(x.Directory, nextDirectory))) throw new CliException($"Advance directory overlaps registered member directory: {nextDirectory}", 1);
+        if (NuGet.Versioning.NuGetVersion.Parse(nextVersion) <= NuGet.Versioning.NuGetVersion.Parse(m.Version))
+            throw new CliException("New version must be greater than the workspace pin.", 1);
+
+        // The editable extraction is disposable. Do not clone gigabytes into a second directory.
+        // The configured member directory remains stable and can be unpacked again when needed.
+        if (options.TryGetValue("directory", out var requestedDirectory) &&
+            !string.Equals(NormalizeRelative(requestedDirectory, "directory"), m.Directory, StringComparison.OrdinalIgnoreCase))
+            throw new CliException("Workspace advance keeps the registered directory path; --directory cannot select a second copy.", 1);
+
         var packagePath = options.TryGetValue("output", out var outputArg)
             ? ResolveInput(root, outputArg)
             : Path.Combine(Directory.GetParent(currentDir)!.FullName, $"{m.PackageId}.{nextVersion}.nupkg");
         var packageRel = RelativeFromRoot(root, packagePath);
         packagePath = ResolvePath(root, packageRel);
-        if (!packageRel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase)) throw new CliException("Workspace packageFile must refer to a local .nupkg file.", 1);
+        if (!packageRel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+            throw new CliException("Workspace packageFile must refer to a local .nupkg file.", 1);
         EnsurePackageOutputOutsideMembers(root, packagePath, manifest.Members);
         if (string.Equals(Path.GetFullPath(packagePath), Path.GetFullPath(marker), StringComparison.OrdinalIgnoreCase) ||
-            PathRelated(packageRel, nextDirectory) || File.Exists(packagePath) || Directory.Exists(packagePath))
+            File.Exists(packagePath) || Directory.Exists(packagePath))
             throw new CliException($"Advance package output is unsafe or already exists: {packageRel}", 1);
-        var candidateMembers = manifest.Members.Select(x => x).ToList();
-        var updated = new ProjectWorkspaceMember { Alias = m.Alias, PackageId = m.PackageId, Version = nextVersion, PackageFile = packageRel, Directory = nextDirectory };
-        candidateMembers[candidateMembers.IndexOf(m)] = updated; ValidateMembers(candidateMembers, root);
-        string? createdPackage = null; var createdDirectory = false;
+
+        var updated = new ProjectWorkspaceMember
+        {
+            Alias = m.Alias, PackageId = m.PackageId, Version = nextVersion,
+            PackageFile = packageRel, Directory = m.Directory
+        };
+        var candidateMembers = manifest.Members.Select(x => x == m ? updated : x).ToList();
+        ValidateMembers(candidateMembers, root);
+
+        string? createdPackage = null;
+        var pinUpdated = false;
         try
         {
-            createdPackage = await ContentPackages.PackManagedAsync(currentDir, selection, packagePath, options.GetValueOrDefault("message"));
+            createdPackage = await ContentPackages.PackManagedAsync(currentDir, selection, packagePath,
+                options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
             if (AdvanceStageHook is not null) await AdvanceStageHook("packagePublished");
-            await ContentPackages.UnpackAsync(createdPackage, destination, null); createdDirectory = true;
-            if (AdvanceStageHook is not null) await AdvanceStageHook("directoryUnpacked");
-            var newBaseline = await ContentPackages.ReadWorkspaceBaselineForWorkspaceAsync(destination);
-            VerifyPin(updated, newBaseline);
-            if (!await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(destination)) throw new CliException("New advance directory is not clean after unpack.", 1);
+
+            // Check actual package bytes and current working data before discarding the extraction.
+            await ContentPackages.VerifyPackedSourceAsync(currentDir, createdPackage, baseline);
             manifest.Members[manifest.Members.IndexOf(m)] = updated;
             await WriteAtomicAsync(marker, manifest);
+            pinUpdated = true;
+            if (AdvanceStageHook is not null) await AdvanceStageHook("pinUpdated");
+
+            ContentPackages.DeleteManagedDirectory(currentDir);
         }
         catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException or JsonException)
         {
-            var artifacts = string.Join("; ", new[] { createdPackage is not null ? $"unregistered package: {Relative(root, createdPackage)}" : null, createdDirectory ? $"unregistered directory: {nextDirectory}" : null }.Where(x => x is not null));
-            throw new CliException($"Workspace advance did not complete; pin remains {m.PackageId} {m.Version}. {ex.Message}" + (artifacts.Length == 0 ? "" : $" Created artifacts remain for recovery: {artifacts}. Choose new output/directory paths or handle them explicitly."), 1);
+            if (pinUpdated)
+                throw new CliException($"Workspace pin advanced to {nextVersion}, and package '{packageRel}' is retained, but cleanup of extracted directory '{m.Directory}' did not complete. Inspect remaining files and remove the disposable extraction before running workspace unpack again. Cause: {ex.Message}", 1);
+            throw new CliException($"Workspace advance did not complete; pin remains {m.PackageId} {m.Version}. {ex.Message}" +
+                (createdPackage is null ? "" : $" Published package '{packageRel}' remains available; the extracted directory was retained."), 1);
         }
+
         Console.WriteLine($"Advanced {m.Alias}: {m.PackageId} {m.Version} -> {nextVersion}");
-        Console.WriteLine($"Package: {packageRel}; directory: {nextDirectory}; previous directory and package remain intact.");
+        Console.WriteLine($"Package: {packageRel}; extracted directory {m.Directory} removed. Run 'workspace unpack --alias {m.Alias}' to edit again.");
         return 0;
     }
 

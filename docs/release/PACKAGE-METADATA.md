@@ -12,6 +12,6 @@ ProjectUrl / RepositoryUrl: `https://github.com/carlrabbit/dotnet-nuget-content`
 
 Package README: `docs/nuget/README.md`; embed as NuGet readme, verify top-level and RID package metadata.
 
-Release notes: **Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.**
+Release notes: **Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, disposable unpack/edit/pack workspaces, managed multi-package workspaces with explicit pinning, bounded local usage discovery, consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.**
 
 **Human-owned facts**: Inspect the repository LICENSE and actual author/owner. Do not invent a license or copyright owner. Set correct `PackageLicenseExpression` or `PackageLicenseFile`. If no verified distribution license exists, block release qualification and request a human decision. Do not silently create a new license.

@@ -98,6 +98,7 @@ try {
 
     $packed = Invoke-Native @('pack', '--id', 'sample.native', '--version', '1.2.3', '--source', $source, '--output', $package)
     Assert-NativeResult $packed 0 "Created $package$([Environment]::NewLine)" '' 'Native pack with paths containing spaces'
+    if (-not (Test-Path -LiteralPath $source -PathType Container) -or [Convert]::ToHexString([System.IO.File]::ReadAllBytes($textPath)) -ne [Convert]::ToHexString($textBytes)) { throw 'Initial pack modified or removed its arbitrary source directory.' }
     $unpacked = Invoke-Native @('unpack', '--package', $package, '--destination', $destination)
     Assert-NativeResult $unpacked 0 "Extracted to $destination$([Environment]::NewLine)" '' 'Native unpack with paths containing spaces'
     if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $destination 'nested/deeper/readme.txt'))) -ne [Convert]::ToHexString($textBytes)) { throw 'Native text round-trip changed bytes.' }
@@ -112,15 +113,21 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $destination 'added.json'), '{"added":true}')
     $changed = Invoke-Native @('status', '--source', $destination)
     if ($changed.ExitCode -ne 0 -or $changed.Stdout -notmatch 'Added: added.json' -or $changed.Stdout -notmatch 'Modified: nested/deeper/readme.txt' -or $changed.Stdout -notmatch 'Deleted: nested/payload.bin') { throw 'Managed status did not distinguish added, modified, and deleted files.' }
+    $consumerOracle = Join-Path $work 'independent managed content oracle'
+    New-Item -ItemType Directory -Force -Path (Join-Path $consumerOracle 'nested/deeper') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $destination 'nested/deeper/readme.txt') -Destination (Join-Path $consumerOracle 'nested/deeper/readme.txt')
+    Copy-Item -LiteralPath (Join-Path $destination 'added.json') -Destination (Join-Path $consumerOracle 'added.json')
     $managedPackage = Join-Path $work 'sample.native.1.2.4.nupkg'
-    $implicitPack = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--message', 'native lifecycle') $destination
+    $implicitPack = Invoke-Native @('pack', '--patch', '--source', $destination, '--message', 'native lifecycle')
     Assert-NativeResult $implicitPack 0 "Created $managedPackage$([Environment]::NewLine)" '' 'Implicit-root managed pack default output'
+    if (Test-Path -LiteralPath $destination) { throw 'Managed pack did not clean up the editable extraction.' }
+    Assert-NativeResult (Invoke-Native @('unpack', '--package', $managedPackage, '--destination', $destination)) 0 "Extracted to $destination$([Environment]::NewLine)" '' 'Unpack new version for further edits'
     $implicitInventory = Invoke-Native @('status', '--source', $destination)
-    if ($implicitInventory.ExitCode -ne 0 -or $implicitInventory.Stdout -notmatch 'Added: added.json' -or $implicitInventory.Stdout -match 'sample\.native\.1\.2\.4\.nupkg') { throw "Default package output contaminated the workspace inventory: $($implicitInventory.Stdout)" }
+    Assert-NativeResult $implicitInventory 0 "Clean$([Environment]::NewLine)" '' 'Freshly unpacked new version is clean'
     $history = Invoke-Native @('history', '--package', $managedPackage)
     if ($history.ExitCode -ne 0 -or $history.Stdout -notmatch '1.2.3' -or $history.Stdout -notmatch '1.2.4' -or $history.Stdout -notmatch 'native lifecycle') { throw 'Managed package history did not show ordered lineage and its supplied message.' }
     $implicitHistory = Invoke-CapturedProcess $executable @('history') $destination
-    if ($implicitHistory.ExitCode -ne 0 -or $implicitHistory.Stdout -notmatch '1.2.3') { throw 'Implicit current-directory history did not read the workspace baseline.' }
+    if ($implicitHistory.ExitCode -ne 0 -or $implicitHistory.Stdout -notmatch '1.2.3' -or $implicitHistory.Stdout -notmatch '1.2.4') { throw 'Implicit current-directory history did not read the advanced workspace baseline.' }
     $packageStatus = Invoke-Native @('status', '--package', $managedPackage)
     if ($packageStatus.ExitCode -ne 0 -or $packageStatus.Stdout -notmatch 'Package valid: 2 files') { throw 'Managed package inventory validation failed.' }
     $nestedStatus = Invoke-CapturedProcess $executable @('status') (Join-Path $destination 'nested')
@@ -164,26 +171,39 @@ try {
     if (@(Get-ChildItem -LiteralPath $work -Directory -Force -Filter '.partial output with spaces.*.tmp').Count -ne 0) { throw 'Failed extraction left a staging directory.' }
 
     $consumerScript = Join-Path $PSScriptRoot 'validate-consumer.ps1'
-    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage, '-ExpectedSource', $destination)
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage, '-ExpectedSource', $consumerOracle)
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     if ($consumer.ExitCode -ne 0) { throw "Native NuGet consumer validation failed with exit code $($consumer.ExitCode)." }
 
     [System.IO.File]::WriteAllText((Join-Path $destination 'next.json'), '{"next":true}')
-    $explicitDefault = Invoke-Native @('pack', '--version', '1.2.5', '--source', $destination)
+    $explicitDefault = Invoke-Native @('pack', '--patch', '--source', $destination)
     $explicitPackage = Join-Path $work 'sample.native.1.2.5.nupkg'
     Assert-NativeResult $explicitDefault 0 "Created $explicitPackage$([Environment]::NewLine)" '' 'Explicit-root managed pack default output'
-    $workspaceStatus = Invoke-Native @('status', '--source', $destination)
-    if ($workspaceStatus.ExitCode -ne 0 -or $workspaceStatus.Stdout -notmatch 'next.json' -or $workspaceStatus.Stdout -match 'sample\.native\.1\.2\.[45]\.nupkg') { throw "Default package output was not kept outside the explicit workspace: $($workspaceStatus.Stdout)" }
+    if (Test-Path -LiteralPath $destination) { throw 'Explicit-source managed pack retained an extracted directory.' }
+    Assert-NativeResult (Invoke-Native @('unpack', '--package', $explicitPackage, '--destination', $destination)) 0 "Extracted to $destination$([Environment]::NewLine)" '' 'Unpack 1.2.5 for next edit'
+    [System.IO.File]::WriteAllText((Join-Path $destination 'repeat.json'), '{"repeat":true}')
     $insideOutput = Join-Path $destination 'self.nupkg'
-    $insideResult = Invoke-Native @('pack', '--version', '1.2.6', '--source', $destination, '--output', $insideOutput)
-    if ($insideResult.ExitCode -ne 1 -or $insideResult.Stdout -ne '' -or $insideResult.Stderr -notmatch 'Managed package output cannot be inside the workspace' -or (Test-Path -LiteralPath $insideOutput)) { throw 'Explicit output inside the managed workspace was not rejected cleanly.' }
+    $insideResult = Invoke-Native @('pack', '--patch', '--source', $destination, '--output', $insideOutput)
+    if ($insideResult.ExitCode -ne 1 -or $insideResult.Stderr -notmatch 'Managed package output cannot be inside the workspace' -or (Test-Path -LiteralPath $insideOutput)) { throw 'Managed pack accepted an output inside its extraction.' }
+    $repeatedPatch = Invoke-Native @('pack', '--patch', '--source', $destination)
+    $repeatedPackage = Join-Path $work 'sample.native.1.2.6.nupkg'
+    Assert-NativeResult $repeatedPatch 0 "Created $repeatedPackage$([Environment]::NewLine)" '' 'Repeated in-place managed patch'
+    if (Test-Path -LiteralPath $destination) { throw 'Repeated managed pack did not clean up its extraction.' }
+    $repeatedHistory = Invoke-Native @('history', '--package', $repeatedPackage)
+    if ($repeatedHistory.ExitCode -ne 0 -or $repeatedHistory.Stdout -notmatch '1.2.4' -or $repeatedHistory.Stdout -notmatch '1.2.5' -or $repeatedHistory.Stdout -notmatch '1.2.6') { throw 'Repeated unpack/edit/pack did not preserve history.' }
 
     $item = Get-Item -LiteralPath $executable
     $sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+    $managedPackageHash = (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash
+    $explicitPackageHash = (Get-FileHash -LiteralPath $explicitPackage -Algorithm SHA256).Hash
+    $repeatedPackageHash = (Get-FileHash -LiteralPath $repeatedPackage -Algorithm SHA256).Hash
     Write-Output "Native process validation passed: $executable"
     Write-Output "Native executable size: $($item.Length) bytes"
     Write-Output "Native executable SHA-256: $sha256"
+    Write-Output "M0009 package SHA-256 ($managedPackage): $managedPackageHash"
+    Write-Output "M0009 package SHA-256 ($explicitPackage): $explicitPackageHash"
+    Write-Output "M0009 package SHA-256 ($repeatedPackage): $repeatedPackageHash"
     Write-Output 'Native help/version, stdout/stderr ownership, exit codes, spaced paths, hashes, malformed input, destination preservation, and byte-exact round-trip passed.'
 }
 finally {

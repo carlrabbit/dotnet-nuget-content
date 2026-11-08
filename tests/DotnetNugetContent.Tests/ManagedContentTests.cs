@@ -29,12 +29,98 @@ public sealed class ManagedContentTests : IDisposable
         var changed = await ContentPackages.StatusAsync(workspace, null); Assert.Contains("Added: new.txt", changed); Assert.Contains("Modified: nested/one.txt", changed); Assert.Contains("Deleted: bin.dat", changed);
         var marker = await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json"));
         var p2 = await ContentPackages.PackManagedAsync(workspace, "1.1.0", Path.Combine(root, "two.nupkg"), "curated update"); Assert.Equal(Path.Combine(root, "two.nupkg"), p2);
-        Assert.Equal(marker, await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json")));
+        Assert.False(Directory.Exists(workspace));
+        Assert.NotEqual(marker, await PackageManifestBytes(p2));
+        Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p2));
         var history = await ContentPackages.HistoryAsync("unused", p2); Assert.Contains("1.0.0", history); Assert.Contains("1.1.0", history); Assert.Contains("curated update", history);
         var workspace2 = Path.Combine(root, "workspace2"); await ContentPackages.UnpackAsync(p2, workspace2, null); await File.WriteAllTextAsync(Path.Combine(workspace2, "next.txt"), "next snapshot");
         var p3 = await ContentPackages.PackManagedAsync(workspace2, "1.2.0", Path.Combine(root, "three.nupkg"), null); Assert.True(File.Exists(p3));
         using (var archive = ZipFile.OpenRead(p3)) { using var reader = new StreamReader(Assert.Single(archive.Entries, e => e.FullName == ".nuget-content/manifest.json").Open()); using var json = JsonDocument.Parse(await reader.ReadToEndAsync()); Assert.False(json.RootElement.GetProperty("history")[2].TryGetProperty("message", out _)); }
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p3));
+    }
+
+    [Fact]
+    public async Task ManagedPackDeletesExtractionOnlyAfterPublishingVerifiedPackage()
+    {
+        var source = Path.Combine(root, "source"); Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(source, "data.txt"), "baseline");
+        var initial = Path.Combine(root, "initial.nupkg");
+        await ContentPackages.PackInitialAsync("sample.repack", "1.0.0", source, initial);
+        Assert.True(Directory.Exists(source));
+        Assert.Equal("baseline", await File.ReadAllTextAsync(Path.Combine(source, "data.txt")));
+        var originalHash = await ContentPackages.Sha256Async(initial);
+        var workspace = Path.Combine(root, "editable");
+        await ContentPackages.UnpackAsync(initial, workspace, null);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "data.txt"), "first edit");
+
+        var first = await RunCli(root, "pack", "--source", workspace, "--patch");
+        var p1 = Path.Combine(root, "sample.repack.1.0.1.nupkg");
+        Assert.Equal(0, first.ExitCode); Assert.True(File.Exists(p1));
+        Assert.False(Directory.Exists(workspace));
+        Assert.Equal("1.0.1", (await ContentPackages.ReadPackageForWorkspaceAsync(p1)).Package.Version);
+
+        // Edit the next version only after explicitly unpacking it again.
+        await ContentPackages.UnpackAsync(p1, workspace, null);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "data.txt"), "second edit");
+        var second = await RunCli(root, "pack", "--source", workspace, "--patch");
+        var p2 = Path.Combine(root, "sample.repack.1.0.2.nupkg");
+        Assert.Equal(0, second.ExitCode); Assert.True(File.Exists(p2)); Assert.False(Directory.Exists(workspace));
+        var packaged = await ContentPackages.ReadPackageForWorkspaceAsync(p2);
+        Assert.Equal(new[] { "1.0.0", "1.0.1", "1.0.2" }, packaged.History.Select(h => h.Version).ToArray());
+        Assert.Equal(originalHash, await ContentPackages.Sha256Async(initial));
+
+        await ContentPackages.UnpackAsync(p2, workspace, null);
+        var stableBaseline = await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json"));
+        var unchanged = await RunCli(root, "pack", "--source", workspace, "--patch");
+        Assert.Equal(1, unchanged.ExitCode); Assert.True(Directory.Exists(workspace));
+        Assert.Equal(stableBaseline, await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json")));
+
+        await File.WriteAllTextAsync(Path.Combine(workspace, "data.txt"), "third edit");
+        var collisionPath = Path.Combine(root, "sample.repack.1.0.3.nupkg");
+        await File.WriteAllTextAsync(collisionPath, "preserve");
+        var collision = await RunCli(root, "pack", "--source", workspace, "--patch");
+        Assert.Equal(1, collision.ExitCode); Assert.Equal("preserve", await File.ReadAllTextAsync(collisionPath));
+        Assert.True(Directory.Exists(workspace));
+
+        var invalid = await RunCli(root, "pack", "--source", workspace, "--patch", "--output", Path.Combine(root, "wrong.zip"));
+        Assert.Equal(1, invalid.ExitCode); Assert.True(Directory.Exists(workspace));
+
+        // Simulate the user changing content after package publication but before deletion.
+        var partialPackage = Path.Combine(root, "published-before-cleanup.nupkg");
+        ContentPackages.BeforeManagedDirectoryCleanupHook = async _ =>
+            await File.WriteAllTextAsync(Path.Combine(workspace, "data.txt"), "late edit");
+        try
+        {
+            var partial = await RunCli(root, "pack", "--source", workspace, "--patch", "--output", partialPackage);
+            Assert.Equal(1, partial.ExitCode);
+            Assert.Contains("could not be removed", partial.Stderr);
+        }
+        finally { ContentPackages.BeforeManagedDirectoryCleanupHook = null; }
+        Assert.True(File.Exists(partialPackage));
+        Assert.True(Directory.Exists(workspace));
+        Assert.Equal("late edit", await File.ReadAllTextAsync(Path.Combine(workspace, "data.txt")));
+        Assert.Equal(stableBaseline, await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json")));
+        Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", partialPackage));
+
+        // A real Windows sharing violation during recursive deletion must retain the package
+        // and report the extracted path and possible partial cleanup accurately.
+        var failedDeletePackage = Path.Combine(root, "published-with-cleanup-error.nupkg");
+        FileStream? lockedPayload = null;
+        ContentPackages.BeforeManagedDirectoryDeleteHook = directory =>
+            lockedPayload = new FileStream(Path.Combine(directory, "data.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            var failed = await RunCli(root, "pack", "--source", workspace, "--patch", "--output", failedDeletePackage);
+            Assert.Equal(1, failed.ExitCode);
+            Assert.Contains("could not be removed completely", failed.Stderr);
+            Assert.Contains(failedDeletePackage, failed.Stderr);
+            Assert.Contains(workspace, failed.Stderr);
+            Assert.Contains("version 1.0.3", failed.Stderr);
+            Assert.Contains("Previous baseline version: 1.0.2", failed.Stderr);
+        }
+        finally { ContentPackages.BeforeManagedDirectoryDeleteHook = null; lockedPayload?.Dispose(); }
+        Assert.True(File.Exists(failedDeletePackage)); Assert.True(Directory.Exists(workspace));
+        Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", failedDeletePackage));
     }
 
     [Fact]
@@ -74,30 +160,25 @@ public sealed class ManagedContentTests : IDisposable
     }
 
     [Fact]
-    public async Task ManagedDefaultOutputsUseWorkspaceParentAndExplicitInWorkspaceOutputIsRejected()
+    public async Task ManagedDefaultOutputsUseWorkspaceParentAndRejectSelfInclusion()
     {
-        var source = Path.Combine(root, "source");
-        Directory.CreateDirectory(source);
+        var source = Path.Combine(root, "source"); Directory.CreateDirectory(source);
         await File.WriteAllTextAsync(Path.Combine(source, "content.txt"), "initial");
         var initial = Path.Combine(root, "initial.nupkg");
         await ContentPackages.PackInitialAsync("sample.output", "1.0.0", source, initial);
 
-        var implicitWorkspace = Path.Combine(root, "implicit");
-        await ContentPackages.UnpackAsync(initial, implicitWorkspace, null);
-        await File.WriteAllTextAsync(Path.Combine(implicitWorkspace, "content.txt"), "updated implicit");
-        var implicitOutput = await ContentPackages.PackManagedAsync(implicitWorkspace, "1.1.0", null, null);
-        Assert.Equal(Path.Combine(root, "sample.output.1.1.0.nupkg"), implicitOutput);
-        Assert.DoesNotContain("sample.output.1.1.0.nupkg", await ContentPackages.StatusAsync(implicitWorkspace, null));
-
-        var explicitWorkspace = Path.Combine(root, "explicit");
-        await ContentPackages.UnpackAsync(initial, explicitWorkspace, null);
-        await File.WriteAllTextAsync(Path.Combine(explicitWorkspace, "content.txt"), "updated explicit");
-        var explicitOutput = await ContentPackages.PackManagedAsync(explicitWorkspace, "1.2.0", null, null);
-        Assert.Equal(Path.Combine(root, "sample.output.1.2.0.nupkg"), explicitOutput);
-        await File.WriteAllTextAsync(Path.Combine(explicitWorkspace, "content.txt"), "another update");
-        var inside = Path.Combine(explicitWorkspace, "nested", "self.nupkg");
-        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(explicitWorkspace, "1.3.0", inside, null));
+        var workspace = Path.Combine(root, "extracted");
+        await ContentPackages.UnpackAsync(initial, workspace, null);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "content.txt"), "updated");
+        var inside = Path.Combine(workspace, "nested", "self.nupkg");
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(workspace, "1.1.0", inside, null));
+        Assert.True(Directory.Exists(workspace));
         Assert.False(File.Exists(inside));
+
+        var output = await ContentPackages.PackManagedAsync(workspace, "1.1.0", null, null);
+        Assert.Equal(Path.Combine(root, "sample.output.1.1.0.nupkg"), output);
+        Assert.True(File.Exists(output));
+        Assert.False(Directory.Exists(workspace));
     }
 
     [Fact]
@@ -229,6 +310,16 @@ public sealed class ManagedContentTests : IDisposable
         Assert.Equal(1, error.ExitCode);
         Assert.Empty(error.Stdout);
         Assert.StartsWith("error: Package not found:", error.Stderr);
+    }
+
+    private static async Task<byte[]> PackageManifestBytes(string packagePath)
+    {
+        using var archive = ZipFile.OpenRead(packagePath);
+        var entry = Assert.Single(archive.Entries, x => x.FullName == ".nuget-content/manifest.json");
+        await using var stream = entry.Open();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        return memory.ToArray();
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCli(string workingDirectory, params string[] args)

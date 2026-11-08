@@ -25,15 +25,15 @@ public sealed class M0006Tests : IDisposable
     }
 
     [Fact]
-    public async Task ManagedPackIncrementCreatesConsistentPackageWithoutChangingBaseline()
+    public async Task ManagedPackIncrementCreatesPackageAndDeletesExtractedDirectory()
     {
         var package = await MakePackage("sample.increment", "0.9.8", "old");
-        var workspace = Path.Combine(root, "workspace"); await ContentPackages.UnpackAsync(package, workspace, null);
+        var workspace = Path.Combine(root, "workspace");
+        await ContentPackages.UnpackAsync(package, workspace, null);
         await File.WriteAllTextAsync(Path.Combine(workspace, "payload.txt"), "new");
-        var baseline = await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json"));
         var output = Path.Combine(root, "sample.increment.1.0.0.nupkg");
         Assert.Equal(0, await Run("pack", "--source", workspace, "--major"));
-        Assert.Equal(baseline, await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json")));
+        Assert.False(Directory.Exists(workspace));
         var manifest = await ContentPackages.ReadPackageForWorkspaceAsync(output);
         Assert.Equal("1.0.0", manifest.Package.Version);
         using var archive = System.IO.Compression.ZipFile.OpenRead(output);
@@ -232,6 +232,16 @@ public sealed class M0006Tests : IDisposable
         var feed = Path.Combine(root, "feed"); Directory.CreateDirectory(feed);
         var package = Path.Combine(feed, id + "." + version + ".nupkg");
         await ContentPackages.PackInitialAsync(id, version, source, package); return package;
+    }
+
+    private static async Task<byte[]> PackageManifestBytes(string packagePath)
+    {
+        using var archive = System.IO.Compression.ZipFile.OpenRead(packagePath);
+        var entry = Assert.Single(archive.Entries, e => e.FullName == ".nuget-content/manifest.json");
+        await using var stream = entry.Open();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        return memory.ToArray();
     }
 
     private async Task<int> Run(params string[] args)
