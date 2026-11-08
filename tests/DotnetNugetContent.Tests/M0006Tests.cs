@@ -25,21 +25,17 @@ public sealed class M0006Tests : IDisposable
     }
 
     [Fact]
-    public async Task ManagedPackIncrementCreatesConsistentPackageAndAdvancesBaseline()
+    public async Task ManagedPackIncrementCreatesPackageAndDeletesExtractedDirectory()
     {
         var package = await MakePackage("sample.increment", "0.9.8", "old");
-        var workspace = Path.Combine(root, "workspace"); await ContentPackages.UnpackAsync(package, workspace, null);
+        var workspace = Path.Combine(root, "workspace");
+        await ContentPackages.UnpackAsync(package, workspace, null);
         await File.WriteAllTextAsync(Path.Combine(workspace, "payload.txt"), "new");
-        var baseline = await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json"));
         var output = Path.Combine(root, "sample.increment.1.0.0.nupkg");
         Assert.Equal(0, await Run("pack", "--source", workspace, "--major"));
-        var updatedBaseline = await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json"));
-        Assert.NotEqual(baseline, updatedBaseline);
+        Assert.False(Directory.Exists(workspace));
         var manifest = await ContentPackages.ReadPackageForWorkspaceAsync(output);
         Assert.Equal("1.0.0", manifest.Package.Version);
-        Assert.Equal(updatedBaseline, await PackageManifestBytes(output));
-        Assert.Equal(0, await Run("status", "--source", workspace));
-        Assert.Equal("Clean" + Environment.NewLine, stdout);
         using var archive = System.IO.Compression.ZipFile.OpenRead(output);
         Assert.Contains(archive.Entries, e => e.FullName == "contentFiles/any/any/payload.txt");
         Assert.Equal(2, manifest.History.Count);
