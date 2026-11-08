@@ -9,6 +9,7 @@
 | M0005 | Project-integrated multi-package workspaces | done | Versioned local pins, managed member lifecycle, explicit pin transitions and on-demand project usage discovery. |
 | M0006 | Version increments and consumer synchronization | done | Semantic managed pack increments and explicit preview/apply reference updates. |
 | M0007 | Coordinated workspace lifecycle | done | Explicit advance, read-only inspection and preview-first safe cleanup. |
-| M0008 | 2.0.0 release qualification | ready | Windows x64 Native AOT candidate preparation, compatibility, installed-tool and scale qualification; publication remains separately authorized. |
+| M0008 | 2.0.0 release qualification | ready | Requalification required on final merged source after M0009; publication separately authorized. |
+| M0009 | Disposable managed content extractions | in progress | Pack/edit/cleanup without duplicate extracted directory; tracked on PR #10. |
 
 M0004 **does not publish** to NuGet.org. A separate explicit human authorization is required for that operation.
