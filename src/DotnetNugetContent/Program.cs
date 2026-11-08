@@ -31,7 +31,7 @@ internal static class Cli
                         if (selection.ExplicitVersion is null) throw new CliException("Initial package creation requires --version.");
                         await ContentPackages.PackInitialAsync(Required(options, "id"), selection.ExplicitVersion, Required(options, "source"), Required(options, "output")); Console.Out.WriteLine($"Created {Path.GetFullPath(options["output"])}");
                     }
-                    else { var output = await ContentPackages.PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, selection, options.GetValueOrDefault("output"), options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Advance); Console.Out.WriteLine($"Created {output}"); }
+                    else { var output = await ContentPackages.PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, selection, options.GetValueOrDefault("output"), options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.DeleteAfterPack); Console.Out.WriteLine($"Created {output}"); }
                     return 0;
                 case "unpack":
                     EnsureOptions(options, "package", "destination", "sha256");
@@ -89,15 +89,16 @@ internal static class Cli
 
         Workflow:
           First package: pack --id ... --version ... --source ... --output ...
-          Update: unpack into a folder, edit files there, pack --patch; keep editing and repeat
+          Update: unpack into a folder, edit files there, pack --patch; extraction removed after success
           Inspect: status and history; add --json for structured output.
 
           Managed status, history and pack use the current directory by default; they
         never search parent directories. Managed pack needs changes and a higher
         version. Relative --major/--minor/--patch use the stable baseline version.
-        Without --output it writes beside the workspace. Successful ordinary managed
-        pack advances that directory's baseline in place; workspace pack preserves
-        its member baseline and pin; workspace advance creates a new clean directory.
+        Without --output it writes beside the extracted directory. Successful ordinary
+        managed pack removes that directory after verifying the immutable package.
+        Workspace pack stages a package only; workspace advance updates the project
+        pin and removes its extracted member directory. Unpack again to edit later.
         Existing output files and extraction destinations are not replaced.
 
         Exit codes: 0 success, 1 operation/integrity error, 2 usage error.
@@ -135,13 +136,13 @@ internal sealed class HistoryResult { public int SchemaVersion { get; set; } = 1
 [JsonSerializable(typeof(HistoryResult))]
 internal partial class ManifestJsonContext : JsonSerializerContext { }
 
-internal enum ManagedPackBaselineBehavior { Preserve, Advance }
+internal enum ManagedPackBaselineBehavior { Preserve, DeleteAfterPack }
 
 internal static class ContentPackages
 {
     private const string Prefix = "contentFiles/any/any/"; private const string ManifestPath = ".nuget-content/manifest.json";
     private static readonly Regex IdPattern = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
-    internal static Func<string, Task>? BeforeBaselineReplacementHook { get; set; }
+    internal static Func<string, Task>? BeforeManagedDirectoryCleanupHook { get; set; }
     public static Task PackAsync(string id, string version, string source, string output) => PackInitialAsync(id, version, source, output);
 
     public static async Task PackInitialAsync(string id, string versionText, string sourcePath, string outputPath)
@@ -151,10 +152,10 @@ internal static class ContentPackages
         var manifest = new Manifest { Package = new() { Id = id, Version = version.ToNormalizedString() }, Files = files }; manifest.History.Add(new() { Version = version.ToNormalizedString(), Changes = new() { Added = files.Select(f => f.Path).ToList() } });
         await CreatePackageAsync(manifest, source, outputPath);
     }
-    public static async Task<string> PackManagedAsync(string sourcePath, string versionText, string? outputPath, string? message, ManagedPackBaselineBehavior baselineBehavior = ManagedPackBaselineBehavior.Advance)
+    public static async Task<string> PackManagedAsync(string sourcePath, string versionText, string? outputPath, string? message, ManagedPackBaselineBehavior baselineBehavior = ManagedPackBaselineBehavior.DeleteAfterPack)
         => await PackManagedAsync(sourcePath, new PackageVersionSelection(versionText, null), outputPath, message, baselineBehavior);
 
-    public static async Task<string> PackManagedAsync(string sourcePath, PackageVersionSelection versionSelection, string? outputPath, string? message, ManagedPackBaselineBehavior baselineBehavior = ManagedPackBaselineBehavior.Advance)
+    public static async Task<string> PackManagedAsync(string sourcePath, PackageVersionSelection versionSelection, string? outputPath, string? message, ManagedPackBaselineBehavior baselineBehavior = ManagedPackBaselineBehavior.DeleteAfterPack)
     {
         var root = ResolveWorkspace(sourcePath); var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath)); var version = versionSelection.Resolve(baseline.Package.Version);
         if (version <= ParseVersion(baseline.Package.Version)) throw new CliException("New version must be greater than the managed workspace baseline version.", 1);
@@ -166,18 +167,18 @@ internal static class ContentPackages
         var workspaceParent = Directory.GetParent(root)?.FullName ?? root;
         var output = Path.GetFullPath(outputPath ?? Path.Combine(workspaceParent, $"{manifest.Package.Id}.{version.ToNormalizedString()}.nupkg"));
         if (IsPathWithin(root, output)) throw new CliException("Managed package output cannot be inside the workspace.", 1);
-        var packageManifest = await CreatePackageAsync(manifest, root, output);
-        if (baselineBehavior == ManagedPackBaselineBehavior.Advance)
+        await CreatePackageAsync(manifest, root, output);
+        if (baselineBehavior == ManagedPackBaselineBehavior.DeleteAfterPack)
         {
-            var baselinePath = Path.Combine(root, ManifestPath);
             try
             {
-                if (BeforeBaselineReplacementHook is not null) await BeforeBaselineReplacementHook(baselinePath);
-                await ReplaceManifestAtomicallyAsync(baselinePath, packageManifest);
+                if (BeforeManagedDirectoryCleanupHook is not null) await BeforeManagedDirectoryCleanupHook(root);
+                await VerifyPackedSourceAsync(root, output, baseline);
+                DeleteManagedDirectory(root);
             }
             catch (Exception ex)
             {
-                throw new CliException($"Package was successfully published at '{output}', but the managed baseline could not be advanced. The original baseline remains version {baseline.Package.Version}; intended new version is {manifest.Package.Version}. Recovery: keep both the working directory and package, verify the package with 'dotnet nuget-content status --package {output}', then unpack that package to a separate new directory and continue only after verifying it is clean. Do not delete or overwrite the original directory or package. Cause: {ex.Message}", 1);
+                throw new CliException($"Package was published at '{output}' (version {manifest.Package.Version}), but the extracted working directory '{root}' could not be removed completely. Previous baseline version: {baseline.Package.Version}. The package is retained. Inspect any remaining files before retrying cleanup; do not overwrite the new package. Cause: {ex.Message}", 1);
             }
         }
         return output;
@@ -277,22 +278,28 @@ internal static class ContentPackages
         return manifestBytes;
     }
 
-    private static async Task ReplaceManifestAtomicallyAsync(string manifestPath, byte[] manifestBytes)
+    internal static async Task VerifyPackedSourceAsync(string source, string packagePath, Manifest originalBaseline)
     {
-        var directory = Path.GetDirectoryName(manifestPath)!;
-        var staging = Path.Combine(directory, "manifest.json." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            await using (var stream = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                await stream.WriteAsync(manifestBytes);
-                await stream.FlushAsync();
-                stream.Flush(flushToDisk: true);
-            }
-            File.Replace(staging, manifestPath, null);
-        }
-        finally { if (File.Exists(staging)) File.Delete(staging); }
+        // Verify the immutable artifact and current extracted content before deleting the latter.
+        var (packed, inventory) = await ReadPackageManifestAsync(packagePath, true);
+        if (!InventoryEqual(packed.Files, inventory))
+            throw new CliException("Published package inventory is inconsistent.", 1);
+        var current = await ReadManifestFileAsync(Path.Combine(source, ManifestPath));
+        if (!string.Equals(current.Package.Id, originalBaseline.Package.Id, StringComparison.OrdinalIgnoreCase) ||
+            current.Package.Version != originalBaseline.Package.Version ||
+            !InventoryEqual(current.Files, originalBaseline.Files))
+            throw new CliException("Managed baseline changed during packing; extracted directory retained.", 1);
+        RejectReparsePoints(source);
+        if (!InventoryEqual(packed.Files, await InventoryAsync(source)))
+            throw new CliException("Working files changed during packing; extracted directory retained.", 1);
     }
+
+    internal static void DeleteManagedDirectory(string source)
+    {
+        RejectReparsePoints(source);
+        Directory.Delete(source, recursive: true);
+    }
+
     private static async Task<(Manifest Manifest, List<ManifestFile> Files)> ReadPackageManifestAsync(string path, bool verify)
     {
         if (!File.Exists(path)) throw new CliException($"Package not found: {path}", 1);
