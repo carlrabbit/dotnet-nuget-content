@@ -54,6 +54,11 @@ Primary milestone: `docs/milestones/M0006-versions-and-consumers.md`
 
 M0006 acceptance criteria AC-01 through AC-08 and ART-01 are passed. Gates VAL-01 through VAL-05 and evidence cases EC-01a through EC-08a plus EC-03b are passed. Target branch: `codex/m0006-versions-and-consumers`, based on `origin/main` at `ad26bbf`. Isolation correction is on PR #6; source commit is recorded in the PR description.
 
-## Managed pack baseline advancement amendment
+## Superseded managed pack baseline amendment
 
 The implementation branch intentionally changes the ordinary managed-pack contract after the original M0006 completion. Historical evidence remains applicable to unrelated versioning/reference-update behavior; AC-02 and EC-02a/b above now record the current operation-specific baseline semantics and current proofs. Current Windows x64 Native AOT installed validation and test results are recorded at VAL-01/04. These implementation-branch results are not qualification of a future 2.0.0 merged release commit.
+
+
+### M0009 superseding lifecycle — no new validation claimed
+
+The current disposable-extraction behavior is specified and evidenced in `docs/specs/M0009-disposable-extractions.md` and `.execution/M0009-disposable-extractions.md`. The historic in-place-baseline evidence above does not validate the new lifecycle; all relevant tests and installed-tool gates must be rerun. No historical receipts are rewritten as current passes.
