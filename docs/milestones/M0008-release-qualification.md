@@ -88,3 +88,8 @@ Update README, NuGet README, public help, release docs, operator publishing chec
 ## Escalation
 
 Material changes to package format, distribution targets, public schemas, publication permissions or irreconcilable SDK/Native AOT behavior return to planning. Do not silently change release contract.
+
+
+## M0009 superseding extraction lifecycle
+
+Release qualification must include the disposable unpack/edit/pack/delete behavior defined in `docs/specs/M0009-disposable-extractions.md`. Existing implementation-branch candidate hashes and validation receipts are invalidated by changes to packaging behavior. Rebuild and rerun all M0008 gates from final merged `main` after M0009 acceptance; do not publish on a prior receipt.
