@@ -13,6 +13,7 @@ $root = Join-Path $work 'fixture-root'
 $exe = Join-Path $work 'dotnet-nuget-content.exe'
 $seed = 'm8-scale-v1'
 $script:sampleReports = [System.Collections.Generic.List[object]]::new()
+$wholeRunWatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 function Invoke-MeasuredNative([string[]] $Arguments, [string] $Name) {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -145,10 +146,11 @@ try {
     }
 
     $inspectArgs = @('workspace', 'inspect', '--all', '--json')
-    $inspectOne = Invoke-Workspace $inspectArgs 'workspace inspection sample 1'
-    $inspectTwo = Invoke-Workspace $inspectArgs 'workspace inspection sample 2'
+    $inspectOne = Invoke-MeasuredNative ($inspectArgs + @('--workspace', $root)) 'workspace inspection sample 1'
+    $inspectTwo = Invoke-MeasuredNative ($inspectArgs + @('--workspace', $root)) 'workspace inspection sample 2'
+    if ($inspectOne.ExitCode -ne 1 -or $inspectTwo.ExitCode -ne 1 -or $inspectOne.Stderr -notmatch 'Conditional package reference' -or $inspectTwo.Stderr -notmatch 'Conditional package reference') { throw 'Inspect did not consistently report the expected conditional declaration diagnostic.' }
     $inspectJson = $inspectTwo.Stdout | ConvertFrom-Json
-    if (@($inspectJson.members).Count -ne 10 -or @($inspectJson.members | Where-Object { $_.state -eq 'corrupt' -or $_.state -eq 'mismatched' }).Count -gt 0) { throw 'Workspace inspect returned an incomplete or invalid member state.' }
+    if (@($inspectJson.members).Count -ne 10 -or @($inspectJson.members | Where-Object { $_.state -eq 'corrupt' -or $_.state -eq 'mismatched' }).Count -gt 0 -or @($inspectJson.diagnostics | Where-Object { $_ -match 'Conditional package reference' }).Count -eq 0) { throw 'Workspace inspect returned an incomplete or invalid member state/diagnostic.' }
 
     $previewArgs = @('workspace', 'references', 'update', '--alias', 'pkg00', '--json')
     $preview1 = Invoke-Workspace $previewArgs 'selected reference preview sample 1'
@@ -179,7 +181,8 @@ try {
     if ((Get-Sha256 $propsPath) -eq $propsBefore -or $propsAfter -notmatch 'sample\.scale\.pkg00" Version="1\.0\.1"' -or [regex]::Matches($propsAfter, '<PackageVersion Include="sample\.scale\.pkg00"').Count -ne 1) { throw 'The selected central package version was not changed exactly once.' }
     if ((Get-Sha256 $unrelatedPath) -cne $unrelatedBefore) { throw 'Reference apply changed an unrelated project file.' }
 
-    $dynamicPreview = Invoke-Workspace @('workspace', 'references', 'update', '--alias', 'pkg09', '--json') 'dynamic reference negative preview'
+    $dynamicPreview = Invoke-MeasuredNative @('workspace', 'references', 'update', '--alias', 'pkg09', '--json', '--workspace', $root) 'dynamic reference negative preview'
+    if ($dynamicPreview.ExitCode -ne 1 -or $dynamicPreview.Stderr) { throw "Dynamic reference preview did not return the documented blocked-plan operation code: $($dynamicPreview.Stderr)" }
     $dynamicPlan = $dynamicPreview.Stdout | ConvertFrom-Json
     if ($dynamicPlan.canApply -or $dynamicPlan.applied -or @($dynamicPlan.blockers).Count -eq 0) { throw 'Dynamic/conditional declaration did not block a reference update plan.' }
     $dynamicFile = Join-Path $root 'projects/Project000/Project000.csproj'
@@ -188,7 +191,8 @@ try {
     if ($dynamicApply.ExitCode -ne 1 -or $dynamicApply.Stderr) { throw "Blocked dynamic reference apply did not fail with the documented operation code: $($dynamicApply.Stderr)" }
     $blockedPlan = $dynamicApply.Stdout | ConvertFrom-Json
     if ($blockedPlan.applied -or $blockedPlan.canApply -or (Get-Sha256 $dynamicFile) -cne $dynamicBefore) { throw 'Blocked dynamic/conditional reference apply wrote project files.' }
-    $conditionalPreview = Invoke-Workspace @('workspace', 'references', 'update', '--alias', 'pkg08', '--json') 'conditional reference negative preview'
+    $conditionalPreview = Invoke-MeasuredNative @('workspace', 'references', 'update', '--alias', 'pkg08', '--json', '--workspace', $root) 'conditional reference negative preview'
+    if ($conditionalPreview.ExitCode -ne 1 -or $conditionalPreview.Stderr) { throw "Conditional reference preview did not return the documented blocked-plan operation code: $($conditionalPreview.Stderr)" }
     $conditionalPlan = $conditionalPreview.Stdout | ConvertFrom-Json
     if ($conditionalPlan.canApply -or $conditionalPlan.applied -or @($conditionalPlan.blockers).Count -eq 0) { throw 'Conditional declaration did not block a reference update plan.' }
     $conditionalBefore = Get-Sha256 $dynamicFile
@@ -199,16 +203,36 @@ try {
     $outsideSentinel = Join-Path $work 'outside-sentinel.txt'
     if ([System.IO.File]::ReadAllText($outsideSentinel) -cne 'must remain outside scan scope') { throw 'Scale operations changed a file outside the project root.' }
 
-    $elapsed = [math]::Round(($script:sampleReports | Measure-Object elapsedMilliseconds -Sum).Sum, 1)
-    $qualificationElapsed = [math]::Round(($script:sampleReports | Where-Object { $_.name -match 'usage scan|workspace inspection|reference preview|reference apply|reference negative' } | Measure-Object elapsedMilliseconds -Sum).Sum, 1)
+    [double]$elapsedTotal = 0
+    [double]$qualificationElapsedTotal = 0
+    foreach ($sample in $script:sampleReports) {
+        $elapsedTotal += [double]$sample['elapsedMilliseconds']
+        if ([string]$sample['name'] -match 'usage scan|workspace inspection|reference preview|reference apply|reference negative') { $qualificationElapsedTotal += [double]$sample['elapsedMilliseconds'] }
+    }
+    $elapsed = [math]::Round($elapsedTotal, 1)
+    $qualificationElapsed = [math]::Round($qualificationElapsedTotal, 1)
+    $wholeRunWatch.Stop()
+    $usageSiteCount = @($usageJson.members | ForEach-Object useSites | ForEach-Object { $_ }).Count
+    $usageClassifications = @($usageJson.members | ForEach-Object useSites | ForEach-Object { $_.classification } | Sort-Object -Unique)
+    $inspectStates = @($inspectJson.members | Group-Object state | Sort-Object Name | ForEach-Object { [ordered]@{ state = $_.Name; count = $_.Count } })
+    $referenceSourceKinds = @($plan.changes | Group-Object sourceKind | Sort-Object Name | ForEach-Object { [ordered]@{ sourceKind = $_.Name; count = $_.Count } })
     $result = [ordered]@{
         schemaVersion = 1; fixtureSeed = $seed; projectCount = 100; registeredPackageCount = 10
         referenceMix = 'literal direct, literal central, dynamic version, conditional declaration; one selected package update'
         environment = [ordered]@{ os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription; architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString(); sdk = (& dotnet --version).Trim() }
         candidateRidPackage = [System.IO.Path]::GetFileName($ridPackage); candidateRidPackageSha256 = Get-Sha256 $ridPackage
         watchdogSecondsPerOperation = $TimeoutSeconds; watchdogIsPerformanceSla = $false
-        operations = @($script:sampleReports); fixtureAndValidationElapsedMilliseconds = $elapsed; measuredUsageInspectionReferenceElapsedMilliseconds = $qualificationElapsed
-        assertions = [ordered]@{ usagePackageIds = $usageIds; usageProjectPathsObserved = $observedProjectPaths.Count; generatedProjectExclusions = $true; inspectMembers = @($inspectJson.members).Count; referenceChanges = @($plan.changes).Count; selectedApply = $applyJson.applied; dynamicApplyBlocked = -not $blockedPlan.applied; conditionalApplyBlocked = -not $conditionalBlockedPlan.applied; unrelatedProjectPreserved = $true; outsideRootSentinelPreserved = $true }
+        operations = @($script:sampleReports); totalOperationElapsedMilliseconds = $elapsed; measuredUsageInspectionReferenceElapsedMilliseconds = $qualificationElapsed
+        totalWallClockElapsedMilliseconds = [math]::Round($wholeRunWatch.Elapsed.TotalMilliseconds, 1)
+        outputs = [ordered]@{
+            usage = [ordered]@{ packageIds = $usageIds; observedProjectPaths = $observedProjectPaths.Count; useSiteCount = $usageSiteCount; classifications = $usageClassifications }
+            inspect = [ordered]@{ memberStates = $inspectStates; diagnostics = @($inspectJson.diagnostics) }
+            selectedReferencePreview = [ordered]@{ targetVersion = $plan.targetVersion; canApply = $plan.canApply; changes = @($plan.changes); sourceKinds = $referenceSourceKinds }
+            selectedReferenceApply = [ordered]@{ targetVersion = $applyJson.targetVersion; applied = $applyJson.applied }
+            dynamicReferenceBlockers = @($blockedPlan.blockers)
+            conditionalReferenceBlockers = @($conditionalBlockedPlan.blockers)
+        }
+        assertions = [ordered]@{ projectCount = 100; packageCount = 10; usageProjectPathsObserved = $observedProjectPaths.Count; generatedProjectExclusions = $true; inspectMembers = @($inspectJson.members).Count; referenceChanges = @($plan.changes).Count; selectedApply = $applyJson.applied; dynamicApplyBlocked = -not $blockedPlan.applied; conditionalApplyBlocked = -not $conditionalBlockedPlan.applied; unrelatedProjectPreserved = $true; outsideRootSentinelPreserved = $true }
     }
     $json = $result | ConvertTo-Json -Depth 10
     if ($CandidateDirectory) {

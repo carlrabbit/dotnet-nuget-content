@@ -343,6 +343,10 @@ No package has been published by candidate preparation.
     Write-Output "Prepared local candidate ($qualificationScope): $candidateRoot"
     Get-Content -LiteralPath (Join-Path $candidateRoot 'candidate.json')
 } catch {
-    if (Test-Path -LiteralPath $candidateRoot) { Remove-Item -LiteralPath $candidateRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $candidateRoot -PathType Container) {
+        $failurePath = Join-Path $candidateRoot 'preparation-failure.txt'
+        [System.IO.File]::WriteAllText($failurePath, "Preparation failed at $([DateTime]::UtcNow.ToString('o')).`n$($_.Exception.Message)`nThis directory is incomplete and not publishable.`n", [System.Text.UTF8Encoding]::new($false))
+        throw "Local preparation failed. Incomplete, non-publishable diagnostics were retained at $candidateRoot. $($_.Exception.Message)"
+    }
     throw
 }
