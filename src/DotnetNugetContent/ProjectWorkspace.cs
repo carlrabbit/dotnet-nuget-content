@@ -276,7 +276,7 @@ internal static class ProjectWorkspace
             var candidate = Path.Combine(Directory.GetParent(dir)?.FullName ?? root, $"{m.PackageId}.{selection.Resolve(m.Version).ToNormalizedString()}.nupkg");
             EnsurePackageOutputOutsideMembers(root, candidate, manifest.Members);
         }
-        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"));
+        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
         Console.WriteLine($"Created {created}"); Console.WriteLine($"Workspace pin remains {m.PackageId} {m.Version}; use 'workspace set --alias {m.Alias} --package <new-package>' to advance it."); return 0;
     }
 
@@ -365,7 +365,7 @@ internal static class ProjectWorkspace
         string? createdPackage = null; var createdDirectory = false;
         try
         {
-            createdPackage = await ContentPackages.PackManagedAsync(currentDir, selection, packagePath, options.GetValueOrDefault("message"));
+            createdPackage = await ContentPackages.PackManagedAsync(currentDir, selection, packagePath, options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
             if (AdvanceStageHook is not null) await AdvanceStageHook("packagePublished");
             await ContentPackages.UnpackAsync(createdPackage, destination, null); createdDirectory = true;
             if (AdvanceStageHook is not null) await AdvanceStageHook("directoryUnpacked");

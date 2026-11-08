@@ -13,7 +13,7 @@
 - Implement the publicly documented v1 interchange format in `docs/specs/manifest-v1.md` and `docs/specs/manifest-v1.schema.json`. The JSON Schema is part of the public contract; semantic validations not expressible in schema are normative in the Markdown companion.
 - Package `.nuget-content/manifest.json` is ZIP-root metadata and must never enter `contentFiles` or the consuming project's output. Extract only content into a workspace, copying manifest to its reserved root marker. Reject source payload collision with `.nuget-content`.
 - Hash actual file bytes using SHA-256. Use a case-independent collision policy for content paths so packages aren't ambiguous across Windows/Linux. Stable ordering is ordinal relative path order; semantic version comparisons must use NuGet version rules, not string comparisons.
-- `status` and `history` are read-only. A new version is a new immutable output and leaves workspace baseline untouched; on any validation/pack failure leave no partial nupkg or destructive workspace changes.
+- `status` and `history` are read-only. Ordinary managed pack publishes a complete immutable package and then atomically advances the source directory's baseline to the exact embedded manifest; no user content file is modified. `workspace pack` and `workspace advance` explicitly select baseline preservation to retain project-workspace transaction semantics. On package-creation failure leave no partial nupkg and do not alter the baseline.
 - Do not add legacy/migration branches: no release yet exists. Do not introduce a manifest authoring prerequisite for initial arbitrary-directory pack.
 
 ## Valid package processing and bounded memory
@@ -24,7 +24,7 @@
 
 ## Atomic publication and interruption semantics
 
-- For pack and unpack, final published package/destination paths are commit boundaries: never expose partially written output at the final path and never overwrite existing user files. An interrupted operation must not corrupt source content or the managed workspace baseline.
+- For pack and unpack, final published package/destination paths are commit boundaries: never expose partially written output at the final path and never overwrite existing user files. For ordinary managed pack, the immutable package is published first and the baseline manifest is staged in the same directory, flushed, and atomically replaced using the supported Windows filesystem operation. A baseline-replacement failure must leave the old valid baseline in place, retain the complete package, and report both versions, package path, and non-destructive recovery; do not claim cross-artifact transactionality. An interrupted operation must not corrupt source content or replace the baseline with partial JSON.
 - On ordinary handled failures, clean staged artifacts. An abrupt external termination (for example, process kill) bypasses in-process cleanup and **may leave uniquely named temporary files**. Such remnants must not be mistaken for valid final artifacts, overwrite existing data, or be included in managed workspace payload. No crash-recovery service, journaling, or guarantee of cleanup after a forced kill is required.
 - Interruption validation must establish a meaningful operation phase (preferably after staging begins), not infer it from an arbitrary short delay. Test final-path atomicity and baseline preservation after forced termination separately from cleanup after ordinary errors. If deterministic stage observation cannot be achieved, do not claim that the relevant stage was exercised.
 
@@ -35,7 +35,7 @@
 - Tier 4: extend `pwsh -NoProfile -File scripts/validate-native.ps1` (or equivalent repository-owned repeatable native validation) to prove the current published executable performs the M0002 workflow, and use a fresh isolated .NET 11 `PackageReference` consumer to verify only content files are copied, exact bytes/paths preserved, metadata excluded, with final consumer bytes compared to independently prepared workspace source bytes rather than only data read back from the package. Use actual current build and record native binary provenance/trim diagnostics; no managed DLL substitution.
 - Completion evidence maps each AC/EC individually to the executed target, not a global passed-suite claim.
 
-The manifest serializer uses source-generated `System.Text.Json` metadata for Native AOT. Package status validates the v1 manifest structure, history sequence and embedded payload inventory. Managed workspace discovery checks only the explicit source root or invocation current directory; the baseline marker remains unchanged during status and repack.
+The manifest serializer uses source-generated `System.Text.Json` metadata for Native AOT. Package status validates the v1 manifest structure, history sequence and embedded payload inventory. Managed workspace discovery checks only the explicit source root or invocation current directory. `status` and `history` are read-only; successful ordinary managed `pack` advances the baseline, while workspace packaging explicitly preserves the member baseline.
 
 ## Distribution boundary
 

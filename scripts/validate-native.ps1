@@ -113,14 +113,14 @@ try {
     $changed = Invoke-Native @('status', '--source', $destination)
     if ($changed.ExitCode -ne 0 -or $changed.Stdout -notmatch 'Added: added.json' -or $changed.Stdout -notmatch 'Modified: nested/deeper/readme.txt' -or $changed.Stdout -notmatch 'Deleted: nested/payload.bin') { throw 'Managed status did not distinguish added, modified, and deleted files.' }
     $managedPackage = Join-Path $work 'sample.native.1.2.4.nupkg'
-    $implicitPack = Invoke-CapturedProcess $executable @('pack', '--version', '1.2.4', '--message', 'native lifecycle') $destination
+    $implicitPack = Invoke-CapturedProcess $executable @('pack', '--patch', '--message', 'native lifecycle') $destination
     Assert-NativeResult $implicitPack 0 "Created $managedPackage$([Environment]::NewLine)" '' 'Implicit-root managed pack default output'
     $implicitInventory = Invoke-Native @('status', '--source', $destination)
-    if ($implicitInventory.ExitCode -ne 0 -or $implicitInventory.Stdout -notmatch 'Added: added.json' -or $implicitInventory.Stdout -match 'sample\.native\.1\.2\.4\.nupkg') { throw "Default package output contaminated the workspace inventory: $($implicitInventory.Stdout)" }
+    Assert-NativeResult $implicitInventory 0 "Clean$([Environment]::NewLine)" '' 'Managed pack advances the existing baseline'
     $history = Invoke-Native @('history', '--package', $managedPackage)
     if ($history.ExitCode -ne 0 -or $history.Stdout -notmatch '1.2.3' -or $history.Stdout -notmatch '1.2.4' -or $history.Stdout -notmatch 'native lifecycle') { throw 'Managed package history did not show ordered lineage and its supplied message.' }
     $implicitHistory = Invoke-CapturedProcess $executable @('history') $destination
-    if ($implicitHistory.ExitCode -ne 0 -or $implicitHistory.Stdout -notmatch '1.2.3') { throw 'Implicit current-directory history did not read the workspace baseline.' }
+    if ($implicitHistory.ExitCode -ne 0 -or $implicitHistory.Stdout -notmatch '1.2.3' -or $implicitHistory.Stdout -notmatch '1.2.4') { throw 'Implicit current-directory history did not read the advanced workspace baseline.' }
     $packageStatus = Invoke-Native @('status', '--package', $managedPackage)
     if ($packageStatus.ExitCode -ne 0 -or $packageStatus.Stdout -notmatch 'Package valid: 2 files') { throw 'Managed package inventory validation failed.' }
     $nestedStatus = Invoke-CapturedProcess $executable @('status') (Join-Path $destination 'nested')
@@ -170,13 +170,22 @@ try {
     if ($consumer.ExitCode -ne 0) { throw "Native NuGet consumer validation failed with exit code $($consumer.ExitCode)." }
 
     [System.IO.File]::WriteAllText((Join-Path $destination 'next.json'), '{"next":true}')
-    $explicitDefault = Invoke-Native @('pack', '--version', '1.2.5', '--source', $destination)
+    $explicitDefault = Invoke-Native @('pack', '--patch', '--source', $destination)
     $explicitPackage = Join-Path $work 'sample.native.1.2.5.nupkg'
     Assert-NativeResult $explicitDefault 0 "Created $explicitPackage$([Environment]::NewLine)" '' 'Explicit-root managed pack default output'
     $workspaceStatus = Invoke-Native @('status', '--source', $destination)
-    if ($workspaceStatus.ExitCode -ne 0 -or $workspaceStatus.Stdout -notmatch 'next.json' -or $workspaceStatus.Stdout -match 'sample\.native\.1\.2\.[45]\.nupkg') { throw "Default package output was not kept outside the explicit workspace: $($workspaceStatus.Stdout)" }
+    Assert-NativeResult $workspaceStatus 0 "Clean$([Environment]::NewLine)" '' 'Explicit-source managed pack advances its baseline'
+    [System.IO.File]::WriteAllText((Join-Path $destination 'repeat.json'), '{"repeat":true}')
+    $repeatedPatch = Invoke-CapturedProcess $executable @('pack', '--patch') $destination
+    $repeatedPackage = Join-Path $work 'sample.native.1.2.6.nupkg'
+    Assert-NativeResult $repeatedPatch 0 "Created $repeatedPackage$([Environment]::NewLine)" '' 'Repeated in-place managed patch'
+    $repeatedStatus = Invoke-Native @('status', '--source', $destination)
+    Assert-NativeResult $repeatedStatus 0 "Clean$([Environment]::NewLine)" '' 'Repeated managed patch leaves a clean baseline'
+    $repeatedHistory = Invoke-CapturedProcess $executable @('history') $destination
+    if ($repeatedHistory.ExitCode -ne 0 -or $repeatedHistory.Stdout -notmatch '1.2.4' -or $repeatedHistory.Stdout -notmatch '1.2.5' -or $repeatedHistory.Stdout -notmatch '1.2.6') { throw 'Repeated in-place patches did not append ordered baseline history.' }
+    [System.IO.File]::WriteAllText((Join-Path $destination 'pending-output-check.json'), '{"pending":true}')
     $insideOutput = Join-Path $destination 'self.nupkg'
-    $insideResult = Invoke-Native @('pack', '--version', '1.2.6', '--source', $destination, '--output', $insideOutput)
+    $insideResult = Invoke-Native @('pack', '--patch', '--source', $destination, '--output', $insideOutput)
     if ($insideResult.ExitCode -ne 1 -or $insideResult.Stdout -ne '' -or $insideResult.Stderr -notmatch 'Managed package output cannot be inside the workspace' -or (Test-Path -LiteralPath $insideOutput)) { throw 'Explicit output inside the managed workspace was not rejected cleanly.' }
 
     $item = Get-Item -LiteralPath $executable

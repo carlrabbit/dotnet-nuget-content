@@ -34,6 +34,8 @@ public sealed class ProjectWorkspaceTests : IDisposable
             Assert.Equal("clean", status.RootElement.GetProperty("members")[1].GetProperty("state").GetString());
         }
         var marker = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
+        var memberBaselinePath = Path.Combine(root, "content", "fixtures", ".nuget-content", "manifest.json");
+        var memberBaseline = await File.ReadAllBytesAsync(memberBaselinePath);
         await File.WriteAllTextAsync(Path.Combine(root, "content", "fixtures", "payload.txt"), "changed");
         Assert.Equal(0, await Run(root, "workspace", "status", "--alias", "fixtures", "--json"));
         using (var modified = JsonDocument.Parse(stdout))
@@ -46,7 +48,8 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var outputPackage = Path.Combine(root, "content", "fixtures.pkg.1.1.0.nupkg");
         Assert.True(File.Exists(outputPackage));
         Assert.Equal(marker, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
-        Assert.Contains("1.0.0", await File.ReadAllTextAsync(Path.Combine(root, "content", "fixtures", ".nuget-content", "manifest.json")));
+        Assert.Equal(memberBaseline, await File.ReadAllBytesAsync(memberBaselinePath));
+        Assert.Equal("1.1.0", (await ContentPackages.ReadPackageForWorkspaceAsync(outputPackage)).Package.Version);
 
         var beforeFailure = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
         var oldWorkspaceContent = await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt"));
@@ -244,6 +247,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "other", "--package", "feed/sample.other.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--all"));
         var prior = Path.Combine(root, "content", "advance");
+        var priorBaseline = await File.ReadAllBytesAsync(Path.Combine(prior, ".nuget-content", "manifest.json"));
         await File.WriteAllTextAsync(Path.Combine(prior, "payload.txt"), "edited for next package");
         var priorBytes = await File.ReadAllBytesAsync(Path.Combine(prior, "payload.txt"));
         var otherBytes = await File.ReadAllBytesAsync(Path.Combine(root, "content", "other", "payload.txt"));
@@ -256,6 +260,8 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Equal("content/advance-1.0.1", advanced.GetProperty("directory").GetString());
         var nextDir = Path.Combine(root, "content", "advance-1.0.1");
         Assert.Equal("edited for next package", await File.ReadAllTextAsync(Path.Combine(nextDir, "payload.txt")));
+        Assert.Equal(priorBaseline, await File.ReadAllBytesAsync(Path.Combine(prior, ".nuget-content", "manifest.json")));
+        Assert.Equal("1.0.1", JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(nextDir, ".nuget-content", "manifest.json"))).RootElement.GetProperty("package").GetProperty("version").GetString());
         Assert.Equal(priorBytes, await File.ReadAllBytesAsync(Path.Combine(prior, "payload.txt")));
         Assert.Equal(otherBytes, await File.ReadAllBytesAsync(Path.Combine(root, "content", "other", "payload.txt")));
         Assert.Equal(oldPackageBytes, await File.ReadAllBytesAsync(old)); Assert.Equal(otherPackageBytes, await File.ReadAllBytesAsync(other));

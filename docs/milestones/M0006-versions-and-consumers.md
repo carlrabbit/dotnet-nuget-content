@@ -20,7 +20,7 @@ Two coherent developer conveniences: increment package versions semantically whi
 
 ## Operative contract and decisions
 
-`docs/specs/M0006-versions-and-consumers.md` is normative. The following are fixed: `--major|--minor|--patch|--version` exclusive, only managed pack supports increments, stable three-numeric-component baseline, no prerelease relative increment; reference updates default to preview and require explicit `--apply`; default target is *pinned* workspace version, explicit target needs verified local package; central references updated in their authoritative props file; ambiguous/dynamic/conditional sources are blocked rather than guessed; no implicit pin updates, feeds, restores, publication, project-format churn or new runtime. Preserve prior public contracts and independent package membership.
+`docs/specs/M0006-versions-and-consumers.md` is normative. The following are fixed: `--major|--minor|--patch|--version` exclusive, only managed pack supports increments, stable three-numeric-component baseline, no prerelease relative increment; ordinary managed pack advances the directory baseline after package publication, while workspace pack preserves its member baseline and pin; reference updates default to preview and require explicit `--apply`; default target is *pinned* workspace version, explicit target needs verified local package; central references updated in their authoritative props file; ambiguous/dynamic/conditional sources are blocked rather than guessed; no implicit pin updates, feeds, restores, publication, project-format churn or new runtime. Preserve prior public JSON contracts and independent package membership.
 
 ## Scope / exclusions
 
@@ -39,7 +39,7 @@ Exclude: 100-project scale qualification (defer to 2.0 release), automatic upgra
 ## Acceptance criteria
 
 - **AC-01** — Managed single-package and workspace pack accept mutually exclusive major/minor/patch/explicit-version selection and produce precisely calculated, normalized stable versions without changing initial pack behavior.
-- **AC-02** — Real packages have consistent filename/nuspec/manifest/history and immutable existing workspace/root-pin semantics; invalid/unchanged/prerelease/conflicting/overflow/collision cases leave no final artifact or modified baseline.
+- **AC-02** — Real packages have consistent filename/nuspec/manifest/history; successful ordinary managed pack atomically advances its directory baseline to the embedded manifest, while workspace pack preserves member baseline/root pin; invalid/unchanged/prerelease/conflicting/overflow/collision cases leave no final artifact or modified baseline. A failure after package publication but before ordinary baseline replacement reports the retained package and old baseline accurately.
 - **AC-03** — `workspace references update` previews exact local target files, old/new versions and blockers without filesystem mutation; default version is pinned, explicit version requires verified local same-ID package.
 - **AC-04** — Applying a supported plan updates literal direct references and central `PackageVersion` declarations correctly, without changing unrelated files, central-version-only unused declarations or workspace pins.
 - **AC-05** — Ambiguous/dynamic/conditional/imported/malformed references are conservatively reported and prevent partial intentional updates; changed-source preflight and handled I/O failures preserve or recover original file contents with truthful partial-state diagnostics.

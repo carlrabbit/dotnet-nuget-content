@@ -111,7 +111,7 @@ function Assert-ReleaseMetadata([System.IO.Compression.ZipArchive] $Archive, [st
         license = 'Unlicense'
         projectUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
         repositoryUrl = 'https://github.com/carlrabbit/dotnet-nuget-content'
-        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, managed multi-package workspaces, bounded local usage discovery, explicit consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
+        releaseNotes = 'Windows x64 Native AOT 2.0.0 release. Immutable content snapshots, in-place ordinary managed pack baseline advancement, managed multi-package workspaces with explicit pinning, bounded local usage discovery, consumer reference updates, coordinated advance and safe cleanup, public manifest v1, and ordinary PackageReference consumption.'
     }
     foreach ($name in $expected.Keys) {
         $actual = switch ($name) {
@@ -325,11 +325,16 @@ try {
     $markerBefore = [System.IO.File]::ReadAllBytes($markerPath)
     $repack = Invoke-Tool @('pack', '--source', $workspace, '--version', '1.1.0', '--message', 'installed update', '--output', $managedPackage)
     Assert-ToolResult $repack 0 'Installed tool managed repack'
-    if ([Convert]::ToHexString($markerBefore) -cne [Convert]::ToHexString([System.IO.File]::ReadAllBytes($markerPath))) { throw 'Managed repack changed its baseline marker.' }
+    $markerAfter = [System.IO.File]::ReadAllBytes($markerPath)
+    if ([Convert]::ToHexString($markerBefore) -ceq [Convert]::ToHexString($markerAfter)) { throw 'Managed repack did not advance its baseline marker.' }
+    $cleanAfterRepack = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $cleanAfterRepack 0 'Clean workspace after managed repack'
+    $cleanAfterRepackJson = Assert-JsonLine $cleanAfterRepack.Stdout 'Clean workspace after managed repack status'
+    if (-not $cleanAfterRepackJson.clean -or $cleanAfterRepackJson.package.version -ne '1.1.0') { throw 'Managed repack did not leave a clean 1.1.0 baseline.' }
     $workspaceHistory = Invoke-Tool @('history', '--source', $workspace, '--json')
     Assert-ToolResult $workspaceHistory 0 'Workspace history JSON'
     $workspaceHistoryJson = Assert-JsonLine $workspaceHistory.Stdout 'Workspace history'
-    if ($workspaceHistoryJson.package.version -ne '1.0.0' -or $workspaceHistoryJson.history.Count -ne 1 -or $workspaceHistoryJson.history[0].ContainsKey('message')) { throw 'Workspace history JSON does not preserve the baseline chronology or omitted message.' }
+    if ($workspaceHistoryJson.package.version -ne '1.1.0' -or $workspaceHistoryJson.history.Count -ne 2 -or $workspaceHistoryJson.history[0].ContainsKey('message') -or $workspaceHistoryJson.history[1].message -ne 'installed update') { throw 'Workspace history JSON does not reflect the advanced baseline chronology and messages.' }
     $packageHistory = Invoke-Tool @('history', '--package', $managedPackage, '--json')
     Assert-ToolResult $packageHistory 0 'Package history JSON'
     $packageHistoryJson = Assert-JsonLine $packageHistory.Stdout 'Package history'
@@ -348,6 +353,21 @@ try {
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     Assert-ToolResult $consumer 0 'Independent PackageReference consumer'
+
+    $firstManagedPackageHash = (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash
+    [System.IO.File]::WriteAllText((Join-Path $workspace 'repeat.json'), '{"repeat":true}')
+    $repeatedManagedPackage = Join-Path $work 'managed snapshot 1.1.1.nupkg'
+    $repeatedRepack = Invoke-Tool @('pack', '--source', $workspace, '--patch', '--output', $repeatedManagedPackage)
+    Assert-ToolResult $repeatedRepack 0 'Installed tool repeated in-place managed patch'
+    if (-not (Test-Path -LiteralPath (Join-Path $workspace 'repeat.json')) -or (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash -cne $firstManagedPackageHash) { throw 'Repeated managed patch changed workspace content or the earlier immutable package.' }
+    $repeatedStatus = Invoke-Tool @('status', '--source', $workspace, '--json')
+    Assert-ToolResult $repeatedStatus 0 'Clean workspace after repeated managed patch'
+    $repeatedStatusJson = Assert-JsonLine $repeatedStatus.Stdout 'Repeated managed patch status'
+    if (-not $repeatedStatusJson.clean -or $repeatedStatusJson.package.version -ne '1.1.1') { throw 'Repeated managed patch did not advance the installed tool workspace to clean 1.1.1.' }
+    $repeatedHistory = Invoke-Tool @('history', '--source', $workspace, '--json')
+    Assert-ToolResult $repeatedHistory 0 'History after repeated managed patch'
+    $repeatedHistoryJson = Assert-JsonLine $repeatedHistory.Stdout 'Repeated managed patch history'
+    if ($repeatedHistoryJson.history.Count -ne 3 -or $repeatedHistoryJson.history[0].version -ne '1.0.0' -or $repeatedHistoryJson.history[1].version -ne '1.1.0' -or $repeatedHistoryJson.history[2].version -ne '1.1.1') { throw 'Repeated managed patch did not append the expected installed-tool history.' }
 
     $heavySource = Join-Path $work 'many Unicode files'; $heavyWorkspace = Join-Path $work 'many Unicode unpacked'; $heavyPackage = Join-Path $work 'many Unicode.nupkg'
     $deep = $heavySource

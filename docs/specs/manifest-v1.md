@@ -7,7 +7,7 @@ This is the initial public metadata interchange format. No prior version is rele
 ## Physical locations
 
 - Package: `.nuget-content/manifest.json` at the **ZIP root**, outside `contentFiles`. It must not be selected by NuGet `contentFiles` patterns or copied into a consuming project's output.
-- Workspace: `<workspace>/.nuget-content/manifest.json`, a faithful baseline descriptor copied from the unpacked package, not rewritten by `status` or on failed `pack`.
+- Workspace: `<workspace>/.nuget-content/manifest.json`, a faithful descriptor of the current managed baseline, initially copied from the unpacked package. `status` and `history` never rewrite it. Failed package creation never rewrites it. On successful ordinary managed `pack`, it is atomically replaced by the exact new package manifest; `workspace pack` and `workspace advance` explicitly preserve the existing member-directory manifest.
 - `.nuget-content` is a reserved top-level content-directory name: source payloads containing that path are rejected. The same reserved namespace is used in package and workspace, with no additional config files in M0002.
 
 ## Data contract

@@ -36,7 +36,7 @@ Scope: initial package manifest, public JSON Schema, metadata validation, manage
 
 - `docs/SPECS.md` fixes command-default semantics; `docs/specs/manifest-v1.md` plus `.schema.json` are public format authority; `docs/ENGINEERING.md` fixes execution/validation and trust boundaries.
 - No released version exists. There is **no legacy or compatibility requirement**. All new packages include a manifest. Unmanaged initial creation still does not require the user to write one.
-- No ancestor search: a managed workspace is recognized at the supplied root or CWD root only. Status/history are read-only; new package must not mutate the baseline marker.
+- No ancestor search: a managed workspace is recognized at the supplied root or CWD root only. Status/history are read-only. Ordinary managed pack publishes the complete package and then atomically replaces the baseline marker with the exact embedded manifest; workspace packaging selects preservation explicitly.
 - Chronological linear ancestry is descriptive only. A new package is a complete snapshot, not a delta or historical payload store.
 - Native AOT and NuGet.Packaging continue; preserve correct contentFiles consumer semantics and no-clobber/staging. No unrelated command/product expansion.
 - Managed pack without `--output` writes `<id>.<version>.nupkg` to the parent of the resolved workspace root for either implicit CWD or explicit `--source`. Explicit outputs inside that root are rejected to prevent package self-inclusion.
@@ -67,8 +67,8 @@ All applicable individually verifiable outcomes have stable IDs and preseeded le
 - **AC-02** — `unpack` creates a managed working directory with correct payload bytes and a baseline marker at its root, while package/working metadata is excluded from contentFiles consumer output.
 - **AC-03** — `status` in a managed workspace reports clean, added, modified and deleted state by SHA-256 and paths without changing the baseline.
 - **AC-04** — Implicit CWD discovery for managed `status`, `history`, and `pack` works only at the workspace root; explicit source works; missing/invalid root marker yields an actionable failure without searching ancestors.
-- **AC-05** — A managed `pack` produces a higher immutable version with complete current payload, correct updated snapshot hashes and one appended accurate linear history entry; `--message` is optional and not invented.
-- **AC-06** — Managed pack rejects unchanged content, non-increasing versions, reserved metadata path collisions and existing output without modifying workspace baseline or leaving partial package outputs.
+- **AC-05** — A managed `pack` produces a higher immutable version with complete current payload, correct updated snapshot hashes and one appended accurate linear history entry; after package publication it atomically advances the same directory's baseline to the exact embedded manifest. `--message` is optional and not invented.
+- **AC-06** — Managed pack rejects unchanged content, non-increasing versions, reserved metadata path collisions and existing output without leaving partial package outputs or modifying the baseline. If package publication succeeds but baseline replacement fails, retain the old baseline and complete package and report both versions, package path and safe recovery steps.
 - **AC-07** — `history` displays recorded lineage from managed workspace or explicit package, in chronological order, including message when supplied.
 - **AC-08** — `status --package` verifies a packaged manifest against actual embedded content and distinguishes valid from mismatched/malformed manifests with nonzero actionable failure.
 - **AC-09** — The public JSON Schema and normative format document are valid, consistent and exercised by representative serialization/validation tests including rejected unknown versions and malformed history.
