@@ -256,7 +256,12 @@ public sealed class ProjectWorkspaceTests : IDisposable
         using var marker = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json")));
         var advanced = Assert.Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "advance");
         Assert.Equal("1.0.1", advanced.GetProperty("version").GetString());
+        Assert.Equal("content/sample.advance.1.0.1.nupkg", advanced.GetProperty("packageFile").GetString());
         Assert.Equal("content/advance", advanced.GetProperty("directory").GetString());
+        var otherPin = Assert.Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other");
+        Assert.Equal("2.0.0", otherPin.GetProperty("version").GetString());
+        Assert.Equal("feed/sample.other.nupkg", otherPin.GetProperty("packageFile").GetString());
+        Assert.Equal("content/other", otherPin.GetProperty("directory").GetString());
         Assert.False(Directory.Exists(extracted));
         Assert.False(Directory.Exists(Path.Combine(root, "content", "advance-1.0.1")));
         var output = Path.Combine(root, "content", "sample.advance.1.0.1.nupkg");
@@ -274,6 +279,28 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--alias", "advance", "--json"));
         using (var inspection = JsonDocument.Parse(stdout))
             Assert.Equal("clean", inspection.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+
+        await File.WriteAllTextAsync(Path.Combine(extracted, "payload.txt"), "second edit");
+        FileStream? lockedPayload = null;
+        ContentPackages.BeforeManagedDirectoryDeleteHook = directory =>
+            lockedPayload = new FileStream(Path.Combine(directory, "payload.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "advance", "--patch"));
+            Assert.Contains("pin advanced to 1.0.2", stderr);
+            Assert.Contains("content/advance", stderr);
+            Assert.True(File.Exists(Path.Combine(root, "content", "sample.advance.1.0.2.nupkg")));
+            using var partialMarker = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json")));
+            var partialPin = Assert.Single(partialMarker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "advance");
+            Assert.Equal("1.0.2", partialPin.GetProperty("version").GetString());
+            Assert.Equal("content/sample.advance.1.0.2.nupkg", partialPin.GetProperty("packageFile").GetString());
+            Assert.Equal("content/advance", partialPin.GetProperty("directory").GetString());
+        }
+        finally { ContentPackages.BeforeManagedDirectoryDeleteHook = null; lockedPayload?.Dispose(); }
+        Assert.True(Directory.Exists(extracted));
+        Directory.Delete(extracted, recursive: true);
+        Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "advance"));
+        Assert.Equal("second edit", await File.ReadAllTextAsync(Path.Combine(extracted, "payload.txt")));
     }
 
     [Theory]

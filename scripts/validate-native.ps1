@@ -98,6 +98,7 @@ try {
 
     $packed = Invoke-Native @('pack', '--id', 'sample.native', '--version', '1.2.3', '--source', $source, '--output', $package)
     Assert-NativeResult $packed 0 "Created $package$([Environment]::NewLine)" '' 'Native pack with paths containing spaces'
+    if (-not (Test-Path -LiteralPath $source -PathType Container) -or [Convert]::ToHexString([System.IO.File]::ReadAllBytes($textPath)) -ne [Convert]::ToHexString($textBytes)) { throw 'Initial pack modified or removed its arbitrary source directory.' }
     $unpacked = Invoke-Native @('unpack', '--package', $package, '--destination', $destination)
     Assert-NativeResult $unpacked 0 "Extracted to $destination$([Environment]::NewLine)" '' 'Native unpack with paths containing spaces'
     if ([Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path $destination 'nested/deeper/readme.txt'))) -ne [Convert]::ToHexString($textBytes)) { throw 'Native text round-trip changed bytes.' }
@@ -112,6 +113,10 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $destination 'added.json'), '{"added":true}')
     $changed = Invoke-Native @('status', '--source', $destination)
     if ($changed.ExitCode -ne 0 -or $changed.Stdout -notmatch 'Added: added.json' -or $changed.Stdout -notmatch 'Modified: nested/deeper/readme.txt' -or $changed.Stdout -notmatch 'Deleted: nested/payload.bin') { throw 'Managed status did not distinguish added, modified, and deleted files.' }
+    $consumerOracle = Join-Path $work 'independent managed content oracle'
+    New-Item -ItemType Directory -Force -Path (Join-Path $consumerOracle 'nested/deeper') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $destination 'nested/deeper/readme.txt') -Destination (Join-Path $consumerOracle 'nested/deeper/readme.txt')
+    Copy-Item -LiteralPath (Join-Path $destination 'added.json') -Destination (Join-Path $consumerOracle 'added.json')
     $managedPackage = Join-Path $work 'sample.native.1.2.4.nupkg'
     $implicitPack = Invoke-Native @('pack', '--patch', '--source', $destination, '--message', 'native lifecycle')
     Assert-NativeResult $implicitPack 0 "Created $managedPackage$([Environment]::NewLine)" '' 'Implicit-root managed pack default output'
@@ -166,7 +171,7 @@ try {
     if (@(Get-ChildItem -LiteralPath $work -Directory -Force -Filter '.partial output with spaces.*.tmp').Count -ne 0) { throw 'Failed extraction left a staging directory.' }
 
     $consumerScript = Join-Path $PSScriptRoot 'validate-consumer.ps1'
-    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage, '-ExpectedSource', $destination)
+    $consumer = Invoke-CapturedProcess (Get-Command pwsh).Source @('-NoProfile', '-File', $consumerScript, '-NativeExecutable', $executable, '-PackagePath', $managedPackage, '-ExpectedSource', $consumerOracle)
     if ($consumer.Stdout) { Write-Output $consumer.Stdout.TrimEnd() }
     if ($consumer.Stderr) { [Console]::Error.WriteLine($consumer.Stderr.TrimEnd()) }
     if ($consumer.ExitCode -ne 0) { throw "Native NuGet consumer validation failed with exit code $($consumer.ExitCode)." }
@@ -190,9 +195,15 @@ try {
 
     $item = Get-Item -LiteralPath $executable
     $sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+    $managedPackageHash = (Get-FileHash -LiteralPath $managedPackage -Algorithm SHA256).Hash
+    $explicitPackageHash = (Get-FileHash -LiteralPath $explicitPackage -Algorithm SHA256).Hash
+    $repeatedPackageHash = (Get-FileHash -LiteralPath $repeatedPackage -Algorithm SHA256).Hash
     Write-Output "Native process validation passed: $executable"
     Write-Output "Native executable size: $($item.Length) bytes"
     Write-Output "Native executable SHA-256: $sha256"
+    Write-Output "M0009 package SHA-256 ($managedPackage): $managedPackageHash"
+    Write-Output "M0009 package SHA-256 ($explicitPackage): $explicitPackageHash"
+    Write-Output "M0009 package SHA-256 ($repeatedPackage): $repeatedPackageHash"
     Write-Output 'Native help/version, stdout/stderr ownership, exit codes, spaced paths, hashes, malformed input, destination preservation, and byte-exact round-trip passed.'
 }
 finally {

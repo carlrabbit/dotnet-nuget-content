@@ -143,6 +143,7 @@ internal static class ContentPackages
     private const string Prefix = "contentFiles/any/any/"; private const string ManifestPath = ".nuget-content/manifest.json";
     private static readonly Regex IdPattern = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     internal static Func<string, Task>? BeforeManagedDirectoryCleanupHook { get; set; }
+    internal static Action<string>? BeforeManagedDirectoryDeleteHook { get; set; }
     public static Task PackAsync(string id, string version, string source, string output) => PackInitialAsync(id, version, source, output);
 
     public static async Task PackInitialAsync(string id, string versionText, string sourcePath, string outputPath)
@@ -297,6 +298,7 @@ internal static class ContentPackages
     internal static void DeleteManagedDirectory(string source)
     {
         RejectReparsePoints(source);
+        BeforeManagedDirectoryDeleteHook?.Invoke(source);
         Directory.Delete(source, recursive: true);
     }
 

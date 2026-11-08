@@ -46,6 +46,8 @@ public sealed class ManagedContentTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(source, "data.txt"), "baseline");
         var initial = Path.Combine(root, "initial.nupkg");
         await ContentPackages.PackInitialAsync("sample.repack", "1.0.0", source, initial);
+        Assert.True(Directory.Exists(source));
+        Assert.Equal("baseline", await File.ReadAllTextAsync(Path.Combine(source, "data.txt")));
         var originalHash = await ContentPackages.Sha256Async(initial);
         var workspace = Path.Combine(root, "editable");
         await ContentPackages.UnpackAsync(initial, workspace, null);
@@ -100,17 +102,22 @@ public sealed class ManagedContentTests : IDisposable
         Assert.Equal(stableBaseline, await File.ReadAllBytesAsync(Path.Combine(workspace, ".nuget-content", "manifest.json")));
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", partialPackage));
 
-        // Even a cleanup I/O error cannot remove the published package.
+        // A real Windows sharing violation during recursive deletion must retain the package
+        // and report the extracted path and possible partial cleanup accurately.
         var failedDeletePackage = Path.Combine(root, "published-with-cleanup-error.nupkg");
-        ContentPackages.BeforeManagedDirectoryCleanupHook = _ => Task.FromException(new IOException("injected cleanup error"));
+        FileStream? lockedPayload = null;
+        ContentPackages.BeforeManagedDirectoryDeleteHook = directory =>
+            lockedPayload = new FileStream(Path.Combine(directory, "data.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
         try
         {
             var failed = await RunCli(root, "pack", "--source", workspace, "--patch", "--output", failedDeletePackage);
             Assert.Equal(1, failed.ExitCode);
-            Assert.Contains("injected cleanup error", failed.Stderr);
+            Assert.Contains("could not be removed completely", failed.Stderr);
+            Assert.Contains(workspace, failed.Stderr);
         }
-        finally { ContentPackages.BeforeManagedDirectoryCleanupHook = null; }
+        finally { ContentPackages.BeforeManagedDirectoryDeleteHook = null; lockedPayload?.Dispose(); }
         Assert.True(File.Exists(failedDeletePackage)); Assert.True(Directory.Exists(workspace));
+        Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", failedDeletePackage));
     }
 
     [Fact]
