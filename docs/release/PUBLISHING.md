@@ -6,6 +6,8 @@ The release consists only of the NuGet .NET tool package `dotnet-nuget-content` 
 
 Run from a clean intended source commit on the existing authorized Windows x64 Native AOT host:
 
+Use the supported stable .NET SDK `11.0.100`.
+
 ```powershell
 pwsh -NoProfile -File eng/publish.ps1 -Prepare
 ```
