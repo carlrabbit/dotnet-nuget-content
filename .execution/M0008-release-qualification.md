@@ -5,6 +5,11 @@ Implementation branch: `codex/m0008-release-qualification`, based on `main` at `
 
 **Release status: PRELIMINARY / AWAITING MERGE QUALIFICATION.** No package or GitHub release was published. Work on this implementation branch cannot satisfy the final merged-source requirement. The first clean-branch `eng/publish.ps1 -Prepare` attempt stopped at scale validation because the fixture initially treated the expected conditional-reference diagnostic as an error; the validator now captures and verifies that diagnostic, and the publisher retains failed-preparation receipts. The corrected full implementation-branch gate passed.
 
+### Human authorization record
+
+- On 2026-11-16, the repository owner approved the M0008 milestone and authorized proceeding with the requested NuGet.org publication only if all release gates pass. This approval was provided directly in the task conversation and recorded on `main` at the owner's direction. It does not claim that final release qualification has passed or that either package has been published.
+- The release-tooling correction PR #11 was closed unmerged at the owner's direction. The correction branch was never merged into `main`; the current `main` publisher and its qualification gates remain authoritative for readiness checks.
+
 ### Preliminary evidence already executed
 
 - `dotnet test DotnetNugetContent.sln -c Release --no-restore`: **36 passed, 0 failed** on Windows x64, SDK `11.0.100-rc.3.26522.148`. The first run exposed a stale `--version` expectation (`1.0.0`); it was updated to `2.0.0`, and the rerun passed.
