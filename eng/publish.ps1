@@ -257,7 +257,7 @@ $qualificationScope = if ($releaseQualified) { 'final-merged-main' } else { 'pre
 $candidateRoot = if ($OutputDirectory) { [System.IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoRoot "artifacts/release-candidate-$version-$sourceCommit" }
 if (Test-Path -LiteralPath $candidateRoot) { throw "Candidate directory already exists and will not be overwritten: $candidateRoot" }
 $sdkVersion = (& dotnet --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.0\.100-rc\.') { throw "Expected the authorized .NET 11 RC SDK; found '$sdkVersion'." }
+if ($LASTEXITCODE -ne 0 -or $sdkVersion -cne '11.0.100') { throw "Expected the supported .NET 11 SDK 11.0.100; found '$sdkVersion'." }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'The existing Visual Studio locator is unavailable; Native AOT prerequisites were not installed.' }
 $compilerPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/cl.exe' | Select-Object -First 1)
