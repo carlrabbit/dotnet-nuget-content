@@ -3,7 +3,9 @@
 Primary milestone: `docs/milestones/M0008-release-qualification.md`
 Implementation branch: `codex/m0008-release-qualification`, based on `main` at `44aade602a257eab773cc988e372bf2b3e1ee168`.
 
-**Release status: PRELIMINARY / AWAITING MERGE QUALIFICATION.** No package or GitHub release was published. Work on this implementation branch cannot satisfy the final merged-source requirement. The first clean-branch `eng/publish.ps1 -Prepare` attempt stopped at scale validation because the fixture initially treated the expected conditional-reference diagnostic as an error; the validator now captures and verifies that diagnostic, and the publisher retains failed-preparation receipts. The corrected full implementation-branch gate passed.
+**Initial ledger status (superseded): PRELIMINARY / AWAITING MERGE QUALIFICATION.** At ledger creation no package or GitHub release had been published; implementation-branch evidence was preliminary. The first clean-branch `eng/publish.ps1 -Prepare` attempt stopped at scale validation because the fixture initially treated the expected conditional-reference diagnostic as an error; the validator now captures and verifies that diagnostic, and the publisher retains failed-preparation receipts. The corrected full implementation-branch gate passed.
+
+**Current release status: PUBLISHED — public indexing and installation verification pending.** Both NuGet.org pushes were accepted RID-first on 2026-11-16. At the user's direction, no post-push indexing checks were run; do not describe the release as `VERIFIED` yet.
 
 ### Human authorization record
 
@@ -85,6 +87,21 @@ These bytes and all accompanying receipts remain implementation-branch evidence.
 | VAL-05 | Repository and candidate provenance | Release checklist/doc parity, real evidence ledger audit and PR human review request | AC-09, ART-01; EC-09a | preliminary-pass; PR review and final audit pending | Docs and this ledger reconciled to current implementation-branch receipts; PR #8 is open at https://github.com/carlrabbit/dotnet-nuget-content/pull/8. Human review/publication approval not claimed. |
 
 
-## M0009 disposable-extraction contract impact (not yet validated)
+## M0009 disposable-extraction contract impact and earlier evidence (superseded below)
 
-The prior preliminary M0008 package hashes and gate receipts predate the M0009 change to managed `pack` and `workspace advance`. They are **historical only**, not evidence for the revised 2.0.0 candidate. All Release xUnit, Windows x64 Native AOT installed-tool, repository-scale, consumer and publishing-candidate gates must be rerun on the final merged source. The source-changing PR #10 is not a qualified 2.0.0 release and no publication is authorized. See `.execution/M0009-disposable-extractions.md`.
+The prior preliminary M0008 package hashes and gate receipts predate the M0009 change to managed `pack` and `workspace advance`; those artifacts remain historical only. This section records the qualification obligation as it stood before final-main validation. PR #10 was later merged; the final candidate and validation evidence are recorded below. See `.execution/M0009-disposable-extractions.md` for criterion-specific implementation evidence.
+
+## Final main qualification and publication record — 2026-11-16
+
+| Item | Final evidence |
+|---|---|
+| Release source | Clean merged `main`, commit `3a2fa795ba4a8f306a12b69b5f121feb2e63e7dc`, tree `8dcd7b85c096037cc6f71230c3955c2a1afa235a`. PR #12 merged the supported .NET 11 SDK update. |
+| Toolchain | .NET SDK `11.0.100`; MSVC x64 compiler `19.51.36260`. |
+| Candidate | `artifacts/release-candidate-2.0.0-3a2fa795ba4a8f306a12b69b5f121feb2e63e7dc-qualified`; immutable after completion. Its `candidate.json` SHA-256 is `9BA701C6407CFA7E7A388B802118638228BD59B1CB29348CF2E97D7B3CDC66C1`. The candidate carries a full-regression supplement; its receipt was run on the exact source commit before preparation and its SHA-256 is recorded below. |
+| Full regression | `dotnet test DotnetNugetContent.sln -c Release --no-restore`: **37 passed, 0 failed, 0 skipped**. Log: `full-regression-validation.log`; SHA-256 `02411CD645D92B19F965F230419DFDD53BED1B0FAB4B73B6518AC14A8E750387`. |
+| Installed tool and native | Global-equivalent and local tool install/invocation, M0005–M0009 lifecycle and independent consumer-byte checks passed. Native executable: 11,261,440 bytes; SHA-256 `5D718AEDF343DE0FF250461F27026448398135CAD25E96D59D51A443F743263E`. Receipt hashes: installed `3FB3DD7B338E6130A6DF4656B593802B96D258D44C3839FD39427E333277452A`; native `113466F8F1219405AFB82645EEF76B8C469C6CC7BCA9DB4B1573B0EB585C0998`. |
+| Scale, audit and mocks | 100-project/10-package scale report passed; dependency audit found no vulnerable packages; RID-first and failure-case publication mocks passed. Receipt hashes: scale log `AE2F3FE5EEDC1AD49A5FBE0ABE2E224A370FDCB7B1A4456106484B8B9E2548D7`, scale report `1C77A468F34AD91AEF9CC236080B8A2834FC72A5A236E84CFED15F4727582AE3`, dependency audit `6224F53871B04562B043849311C965A1469F61FC3BD470B1C47F6C4C3E5B68D2`, publication mocks `EA0C7778DE58E26479D1DD8B8F5BDCD107C0958B21A472237C432F80A8AE53EC`. |
+| Package metadata and relationship | Both package nuspecs identify version 2.0.0, author Martin Koch, Unlicense, the repository URL and source commit. The top-level `DotnetTool` installed the exact matching `DotnetToolRidPackage`; installed validation confirms its executable came from the win-x64 package. |
+| Package artifacts | `dotnet-nuget-content.win-x64` 2.0.0 SHA-256 `E7C8809C4AAD527D281A4631FA27F3DDDD0F5154019A390AB6CC1D70E241D2D5`; `dotnet-nuget-content` 2.0.0 SHA-256 `F4A05DA07AFD77437094E174E68E92C57AE642D64797FD698277452AF1878D0F`. |
+| NuGet.org push | Both commands reported `Your package was pushed`; the win-x64 package completed before the top-level package. No post-push feed/index query or public installation was performed at the user's direction. Public URLs: https://www.nuget.org/packages/dotnet-nuget-content/2.0.0 and https://www.nuget.org/packages/dotnet-nuget-content.win-x64/2.0.0. |
+| Status | **PUBLISHED**, not yet **VERIFIED**. The pre-push registration check found neither version present. Post-push indexing and isolated public installation/help/smoke verification remain pending. No credential value was recorded in this ledger or candidate. |
