@@ -1,0 +1,6 @@
+  DotnetNugetContent -> C:\src\dotnet-nuget-content\src\DotnetNugetContent\bin\Release\net11.0\dotnet-nuget-content.dll
+  DotnetNugetContent.Tests -> C:\src\dotnet-nuget-content\tests\DotnetNugetContent.Tests\bin\Release\net11.0\DotnetNugetContent.Tests.dll
+Test run for C:\src\dotnet-nuget-content\tests\DotnetNugetContent.Tests\bin\Release\net11.0\DotnetNugetContent.Tests.dll (.NETCoreApp,Version=v11.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    37, Skipped:     0, Total:    37, Duration: 12 s - DotnetNugetContent.Tests.dll (net11.0)

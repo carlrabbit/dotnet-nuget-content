@@ -10,6 +10,15 @@ Implementation branch: `codex/m0008-release-qualification`, based on `main` at `
 - On 2026-11-16, the repository owner approved the M0008 milestone and authorized proceeding with the requested NuGet.org publication only if all release gates pass. This approval was provided directly in the task conversation and recorded on `main` at the owner's direction. It does not claim that final release qualification has passed or that either package has been published.
 - The release-tooling correction PR #11 was closed unmerged at the owner's direction. The correction branch was never merged into `main`; the current `main` publisher and its qualification gates remain authoritative for readiness checks.
 
+### Post-approval readiness execution — 2026-11-16
+
+- Readiness source before this evidence update: `daa786cb4ffe1479cfdd5d7eb84af150edc16c0a`, tree `ef6dc1df045570abcf4c70203c07adeabf2f9a6f`, clean `main`.
+- Full regression command `dotnet test DotnetNugetContent.sln -c Release --no-restore` passed on stable SDK `11.0.100`: 37 passed, 0 failed, 0 skipped. Log: `.execution/M0008-main-readiness-regression.log`, SHA-256 `8554E2E3E722C7E050A6C0E8B5725F7DE383FCFAE96D060C1DD94AA5D644374E`.
+- `pwsh -NoProfile -File eng/publish.ps1 -TestPublish` passed the existing mock publication cases. The checked-in publisher has no full-regression receipt or expected-source-SHA gate.
+- `pwsh -NoProfile -File eng/publish.ps1 -Prepare` stopped before build because it requires `.NET 11.0.100-rc.*`; the supported stable `11.0.100` SDK is rejected. No new candidate was produced.
+- The only local candidates are the three prior implementation-branch candidates listed by their source commits above; each has `qualified:false`, `releaseQualified:false`, no expected source SHA and no full-regression receipt. They are ineligible and were not modified or used.
+- NuGet.org registration checks found neither package ID at version `2.0.0`. No push was attempted. `NUGET_API_KEY` was absent from the secure local environment.
+
 ### Preliminary evidence already executed
 
 - `dotnet test DotnetNugetContent.sln -c Release --no-restore`: **36 passed, 0 failed** on Windows x64, SDK `11.0.100-rc.3.26522.148`. The first run exposed a stale `--version` expectation (`1.0.0`); it was updated to `2.0.0`, and the rerun passed.
