@@ -113,6 +113,7 @@ internal static class Cli
     {
         Dictionary<string, string> d = new(StringComparer.Ordinal);
 
+
         for (int i = 0; i < args.Length; i++)
         {
             if (!args[i].StartsWith("--"))
@@ -123,11 +124,13 @@ internal static class Cli
 
             var key = args[i][2..]; var value = key is "json" or "major" or "minor" or "patch" or "apply" ? "true" : i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : throw new CliException($"Expected an option and value, got '{args[i]}'.");
 
+
             if (!d.TryAdd(key, value))
             {
                 throw new CliException($"Option '{args[i]}' was supplied more than once.");
             }
         }
+
 
         return d;
     }
@@ -135,6 +138,7 @@ internal static class Cli
     private static void EnsureOptions(Dictionary<string, string> d, params string[] allowed)
     {
         var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal));
+
 
         if (bad is not null)
         {
@@ -238,6 +242,7 @@ internal static class ContentPackages
     {
         var version = ParseVersion(versionText); ValidateIdentity(id); var source = Path.GetFullPath(sourcePath);
 
+
         if (!Directory.Exists(source))
         {
             throw new CliException($"Source directory not found: {source}", 1);
@@ -245,6 +250,7 @@ internal static class ContentPackages
 
 
         RejectReparsePoints(source); var files = await InventoryAsync(source);
+
 
         if (files.Count == 0)
         {
@@ -290,6 +296,7 @@ internal static class ContentPackages
 
         RejectReparsePoints(root); var files = await InventoryAsync(root);
 
+
         if (files.Count == 0)
         {
             throw new CliException("Workspace must contain at least one content file.", 1);
@@ -297,6 +304,7 @@ internal static class ContentPackages
 
 
         var changes = Diff(baseline.Files, files);
+
 
         if (changes.Added.Count + changes.Modified.Count + changes.Deleted.Count == 0)
         {
@@ -365,6 +373,7 @@ internal static class ContentPackages
     {
         var package = Path.GetFullPath(packagePath);
 
+
         if (!File.Exists(package))
         {
             throw new CliException($"Package not found: {package}", 1);
@@ -374,6 +383,7 @@ internal static class ContentPackages
         {
             var h = await Sha256Async(package);
 
+
             if (!HashEquals(h, expectedHash))
             {
                 throw new CliException($"SHA-256 mismatch. Expected {expectedHash}; actual {h}.", 1);
@@ -382,6 +392,7 @@ internal static class ContentPackages
 
 
         var destination = Path.GetFullPath(destinationPath);
+
 
         if (File.Exists(destination) || Directory.Exists(destination))
         {
@@ -506,6 +517,7 @@ internal static class ContentPackages
     {
         var output = Path.GetFullPath(outputPath);
 
+
         if (!output.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
         {
             throw new CliException("Output path must end in .nupkg.", 1);
@@ -617,9 +629,11 @@ internal static class ContentPackages
         {
             using PackageArchiveReader reader = new PackageArchiveReader(path); var entries = reader.GetFiles().ToArray(); HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
 
+
             foreach (var e in entries)
             {
                 var n = e.Replace('\\', '/'); ValidateArchivePath(n);
+
 
                 if (!names.Add(n))
                 {
@@ -630,6 +644,7 @@ internal static class ContentPackages
 
             var meta = entries.SingleOrDefault(e => e.Replace('\\', '/') == ManifestPath) ?? throw new CliException("Package is missing .nuget-content/manifest.json.", 1);
             await using MemoryStream ms = new();
+
 
             await using (var input = await reader.GetStreamAsync(meta, CancellationToken.None))
             {
@@ -646,6 +661,7 @@ internal static class ContentPackages
             var m = JsonSerializer.Deserialize(manifestBytes, ManifestJsonContext.Default.Manifest) ?? throw new CliException("Manifest is empty.", 1); ValidateManifest(m);
             using var ns = reader.GetNuspec(); NuspecReader nuspec = new NuspecReader(ns);
 
+
             if (!string.Equals(m.Package.Id, nuspec.GetId(), StringComparison.OrdinalIgnoreCase) ||
                             ParseVersion(m.Package.Version) != nuspec.GetVersion())
             {
@@ -656,6 +672,7 @@ internal static class ContentPackages
             var payload = entries.Select(e => e.Replace('\\', '/')).Where(e => e.StartsWith(Prefix, StringComparison.Ordinal))
 
                 .Select(e => e[Prefix.Length..]).OrderBy(x => x, StringComparer.Ordinal).ToList(); List<ManifestFile> inv = new();
+
 
             foreach (var rel in payload) { await using var content = await reader.GetStreamAsync(Prefix + rel, CancellationToken.None); var (size, hash) = await HashAndSizeAsync(content); inv.Add(new() { Path = rel, Size = size, Sha256 = hash }); }
             if (verify && !InventoryEqual(m.Files, inv))
@@ -701,6 +718,7 @@ internal static class ContentPackages
         {
             var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
 
+
             if (rel.Equals(ManifestPath, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -713,6 +731,7 @@ internal static class ContentPackages
 
 
             ValidateRelative(rel);
+
 
             if (!seen.Add(rel))
             {
@@ -729,6 +748,7 @@ internal static class ContentPackages
     private static ChangeSet Diff(List<ManifestFile> old, List<ManifestFile> now)
     {
         var a = old.ToDictionary(f => f.Path, StringComparer.Ordinal); var b = now.ToDictionary(f => f.Path, StringComparer.Ordinal); ChangeSet c = new();
+
 
         foreach (var f in now)
         {
@@ -1072,6 +1092,7 @@ internal static class ContentPackages
     {
         var p = Path.GetFullPath(root);
 
+
         if (!Directory.Exists(p))
         {
             throw new CliException($"Workspace directory not found: {p}", 1);
@@ -1091,6 +1112,7 @@ internal static class ContentPackages
     private static string SafeTarget(string root, string rel)
     {
         var target = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
+
 
         if (!target
 

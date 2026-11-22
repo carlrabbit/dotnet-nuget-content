@@ -184,17 +184,20 @@ public sealed class ManagedContentTests : IDisposable
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p));
         var altered = Path.Combine(root, "altered.nupkg"); File.Copy(p, altered);
 
+
         using (var zip = ZipFile.Open(altered, ZipArchiveMode.Update)) { using StreamWriter w = new(zip.GetEntry("contentFiles/any/any/x")!.Open()); w.Write("y"); }
 
 
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", altered));
         var bad = Path.Combine(root, "bad.nupkg"); File.Copy(p, bad);
 
+
         using (var zip = ZipFile.Open(bad, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w.Write("{\"schemaVersion\":2}"); }
 
 
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", bad));
         var malformedHistory = Path.Combine(root, "bad-history.nupkg"); File.Copy(p, malformedHistory);
+
 
         using (var zip = ZipFile.Open(malformedHistory, ZipArchiveMode.Update))
         {

@@ -415,6 +415,7 @@ internal static class ConsumerReferenceUpdater
             {
                 var m = await ContentPackages.ReadPackageForWorkspaceAsync(pinnedFile);
 
+
                 if (m.Package.Id.Equals(member.PackageId, StringComparison.OrdinalIgnoreCase) && m.Package.Version == member.Version)
                 {
                     candidates.Add((pinnedFile, m.Package.Version));
@@ -485,6 +486,7 @@ internal static class ConsumerReferenceUpdater
 
             IEnumerable<string> children;
 
+
             try { children = Directory.EnumerateFileSystemEntries(current); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AddBlocker(plan, Relative(root, current), "scanFailure", e.Message); continue; }
             foreach (var child in children)
             {
@@ -492,6 +494,7 @@ internal static class ConsumerReferenceUpdater
 
 
                 FileAttributes attr;
+
 
                 try { attr = File.GetAttributes(child); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AddBlocker(plan, Relative(root, child), "scanFailure", e.Message); continue; }
                 if ((attr & FileAttributes.ReparsePoint) != 0)
@@ -510,6 +513,7 @@ internal static class ConsumerReferenceUpdater
                     Path.GetFileName(child).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase))
                 {
                     files.Add(child);
+
 
                     if (files.Count > MaxFiles) { AddBlocker(plan, Relative(root, child), "scanLimit", $"Project scan stopped after {MaxFiles} files."); return files; }
                 }
@@ -553,6 +557,7 @@ internal static class ConsumerReferenceUpdater
         while (IsWithin(root, current))
         {
             var candidate = Path.Combine(current, "Directory.Packages.props");
+
 
             if (File.Exists(candidate))
             {
@@ -711,6 +716,7 @@ internal static class ConsumerReferenceUpdater
 
 
         using MemoryStream stream = new();
+
 
         using (var writer = XmlWriter
 

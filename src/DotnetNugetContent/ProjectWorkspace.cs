@@ -444,6 +444,7 @@ internal static class ProjectWorkspace
         Ensure(options, "alias", "package", "directory", "workspace"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (path, manifest) = await ReadRootAsync(root); var m = FindMember(manifest, Required(options, "alias"));
         var packagePath = ResolveInput(root, Required(options, "package"));
 
+
         if (!File.Exists(packagePath))
         {
             throw new CliException($"Package not found: {packagePath}", 1);
@@ -497,6 +498,7 @@ internal static class ProjectWorkspace
 
 
         var rel = RelativeFromRoot(root, packagePath);
+
 
         if (!rel.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
         {
@@ -700,6 +702,7 @@ internal static class ProjectWorkspace
 
         var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root); var selected = Select(manifest, options);
         var usage = await DiscoverUsageAsync(root, manifest, selected); WorkspaceInspectResult result = new() { Diagnostics = usage.Diagnostics };
+
 
         foreach (var m in selected)
         {
@@ -954,6 +957,7 @@ internal static class ProjectWorkspace
 
 
             var rel = Relative(root, dir);
+
 
             if (members.Any(m => PathRelated(rel, m.Directory)))
             {
@@ -1291,6 +1295,7 @@ internal static class ProjectWorkspace
                 {
                     var id = (string?)node.Attribute("Include") ?? (string?)node.Attribute("Update");
 
+
                     if (id is null)
                     {
                         continue;
@@ -1329,6 +1334,7 @@ internal static class ProjectWorkspace
                 foreach (var node in xml.Descendants().Where(e => e.Name.LocalName == "PackageReference"))
                 {
                     var id = (string?)node.Attribute("Include") ?? (string?)node.Attribute("Update");
+
 
                     if (id is null)
                     {
@@ -1384,6 +1390,7 @@ internal static class ProjectWorkspace
                 {
                     FileInfo fi = new(assets);
 
+
                     if (fi.Length > 32 * 1024 * 1024)
                     {
                         throw new IOException("assets file exceeds 32 MiB inspection limit");
@@ -1398,6 +1405,7 @@ internal static class ProjectWorkspace
                         foreach (var lib in libs.EnumerateObject())
                         {
                             var split = lib.Name.LastIndexOf('/');
+
 
                             if (split <= 0)
                             {
@@ -1510,6 +1518,7 @@ internal static class ProjectWorkspace
     {
         var path = Path.Combine(root, Marker);
 
+
         if (!File.Exists(path))
         {
             throw new CliException($"Project workspace marker not found: {path}", 1);
@@ -1544,6 +1553,7 @@ internal static class ProjectWorkspace
 
         var members = root.GetProperty("members");
 
+
         if (members.ValueKind != JsonValueKind.Array)
         {
             throw new CliException("Project workspace members must be an array.", 1);
@@ -1577,6 +1587,7 @@ internal static class ProjectWorkspace
 
         HashSet<string> seen = new(StringComparer.Ordinal);
 
+
         foreach (var p in value.EnumerateObject())
         {
             if (!seen.Add(p.Name) || !required.Contains(p.Name, StringComparer.Ordinal))
@@ -1601,6 +1612,7 @@ internal static class ProjectWorkspace
         foreach (var m in members)
         {
             ValidateAlias(m.Alias);
+
 
             if (!aliases.Add(m.Alias))
             {
@@ -1672,6 +1684,7 @@ internal static class ProjectWorkspace
 
         var parts = path.Split('/');
 
+
         if (parts.Any(p => p.Length == 0 || p is "." or "..") ||
                     parts[0].Equals(".nuget-content", StringComparison.OrdinalIgnoreCase) ||
             parts[0].Equals(Marker, StringComparison.OrdinalIgnoreCase))
@@ -1694,6 +1707,7 @@ internal static class ProjectWorkspace
     private static string ResolveRoot(string? explicitRoot)
     {
         var root = Path.GetFullPath(explicitRoot ?? Environment.CurrentDirectory);
+
 
         if (!Directory.Exists(root))
         {
@@ -1746,6 +1760,7 @@ internal static class ProjectWorkspace
     {
         var rel = Path.GetRelativePath(root, Path.GetFullPath(path));
 
+
         if (Path.IsPathRooted(rel) || rel == ".." || rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
         {
             throw new CliException("Workspace package file must be located under the project root.", 1);
@@ -1770,6 +1785,7 @@ internal static class ProjectWorkspace
     )
     {
         var full = Path.GetFullPath(output);
+
 
         if (string.Equals(full, Path.Combine(root, Marker), StringComparison.OrdinalIgnoreCase))
         {
@@ -1863,6 +1879,7 @@ internal static class ProjectWorkspace
     private static void Ensure(Dictionary<string, string> d, params string[] allowed)
     {
         var bad = d.Keys.FirstOrDefault(k => !allowed.Contains(k, StringComparer.Ordinal));
+
 
         if (bad is not null)
         {
