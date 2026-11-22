@@ -16,7 +16,7 @@ public sealed class PackageLifecycleTests : IDisposable
         var source = Path.Combine(_root, "source");
         Directory.CreateDirectory(Path.Combine(source, "nested", "deeper"));
         var textBytes = System.Text.Encoding.UTF8.GetBytes("snowman ☃ and newline\r\n");
-        var binaryBytes = new byte[] { 0, 255, 1, 128, 13, 10, 0, 42 };
+        byte[] binaryBytes = [0, 255, 1, 128, 13, 10, 0, 42];
         await File.WriteAllBytesAsync(Path.Combine(source, "nested", "deeper", "readme.txt"), textBytes);
         await File.WriteAllBytesAsync(Path.Combine(source, "nested", "payload.bin"), binaryBytes);
         var package = Path.Combine(_root, "feed", "sample.content.1.2.3.nupkg");
@@ -27,10 +27,11 @@ public sealed class PackageLifecycleTests : IDisposable
 
         Assert.Equal(textBytes, await File.ReadAllBytesAsync(Path.Combine(destination, "nested", "deeper", "readme.txt")));
         Assert.Equal(binaryBytes, await File.ReadAllBytesAsync(Path.Combine(destination, "nested", "payload.bin")));
-        Assert.Equal(Convert.ToHexString(SHA256.HashData(textBytes)), await ContentPackages.Sha256Async(Path.Combine(destination, "nested", "deeper", "readme.txt")));
-        using var reader = new PackageArchiveReader(package);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(textBytes)),
+                await ContentPackages.Sha256Async(Path.Combine(destination, "nested", "deeper", "readme.txt")));
+        using PackageArchiveReader reader = new(package);
         using var nuspecStream = reader.GetNuspec();
-        var nuspec = new NuspecReader(nuspecStream);
+        NuspecReader nuspec = new(nuspecStream);
         var contentEntry = Assert.Single(nuspec.GetContentFiles());
         Assert.Equal("**/*", contentEntry.Include);
         Assert.Equal("None", contentEntry.BuildAction);
@@ -76,7 +77,7 @@ public sealed class PackageLifecycleTests : IDisposable
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
         {
             var nuspec = zip.CreateEntry("invalid.nuspec");
-            await using var writer = new StreamWriter(nuspec.Open());
+            await using StreamWriter writer = new(nuspec.Open());
             await writer.WriteAsync("<package><metadata>");
         }
         var invalidNuspecOutput = Path.Combine(_root, "invalid-nuspec-out");
@@ -110,7 +111,7 @@ public sealed class PackageLifecycleTests : IDisposable
                 await output.WriteAsync(System.Text.Encoding.UTF8.GetBytes(body));
             }
             var nuspec = zip.CreateEntry("duplicate.nuspec");
-            await using var writer = new StreamWriter(nuspec.Open());
+            await using StreamWriter writer = new(nuspec.Open());
             await writer.WriteAsync("""
                 <?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd"><metadata><id>duplicate</id><version>1.0.0</version><authors>test</authors><description>test</description></metadata></package>
                 """);
@@ -132,9 +133,12 @@ public sealed class PackageLifecycleTests : IDisposable
         {
             var nuspec = zip.CreateEntry("malicious.nuspec");
             await using (var writer = new StreamWriter(nuspec.Open()))
+            {
                 await writer.WriteAsync("""
                     <?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd"><metadata><id>malicious</id><version>1.0.0</version><authors>test</authors><description>test</description></metadata></package>
                     """);
+            }
+
             var payload = zip.CreateEntry("contentFiles/any/any/../../../../escaped.txt");
             await using var output = payload.Open();
             await output.WriteAsync(new byte[] { 65 });
@@ -150,8 +154,8 @@ public sealed class PackageLifecycleTests : IDisposable
     {
         var stdout = Console.Out;
         var stderr = Console.Error;
-        using var output = new StringWriter();
-        using var error = new StringWriter();
+        using StringWriter output = new();
+        using StringWriter error = new();
         try
         {
             Console.SetOut(output);
@@ -168,7 +172,8 @@ public sealed class PackageLifecycleTests : IDisposable
             await File.WriteAllTextAsync(file, "content");
             Assert.Equal(1, await Cli.RunAsync(["hash", "--path", file, "--expect", new string('0', 64)]));
             Assert.Equal(string.Empty, output.ToString());
-            Assert.Equal($"error: SHA-256 mismatch for '{file}'. Expected {new string('0', 64)}; actual {Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file)))}.{Environment.NewLine}", error.ToString());
+            Assert.Equal($"error: SHA-256 mismatch for '{file}'. Expected {new string('0', 64)}; actual {Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file)))}.{Environment.NewLine}",
+                    error.ToString());
             error.GetStringBuilder().Clear();
             Assert.Equal(2, await Cli.RunAsync(["hash", "--path", file, "--typo", "value"]));
             Assert.Contains("Unknown option '--typo'", error.ToString());
@@ -192,6 +197,9 @@ public sealed class PackageLifecycleTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        if (Directory.Exists(_root))
+        {
+            Directory.Delete(_root, recursive: true);
+        }
     }
 }

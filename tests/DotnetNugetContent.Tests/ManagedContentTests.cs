@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Text.Json;
-using NuGet.Packaging;
 
 namespace DotnetNugetContent.Tests;
 
@@ -18,7 +17,7 @@ public sealed class ManagedContentTests : IDisposable
         using (var archive = ZipFile.OpenRead(p1))
         {
             var entry = Assert.Single(archive.Entries, e => e.FullName == ".nuget-content/manifest.json");
-            using var reader = new StreamReader(entry.Open()); using var json = JsonDocument.Parse(await reader.ReadToEndAsync());
+            using StreamReader reader = new(entry.Open()); using var json = JsonDocument.Parse(await reader.ReadToEndAsync());
             Assert.Equal(1, json.RootElement.GetProperty("schemaVersion").GetInt32()); Assert.Equal("1.0.0", json.RootElement.GetProperty("package").GetProperty("version").GetString());
             Assert.Equal(2, json.RootElement.GetProperty("files").GetArrayLength()); Assert.Equal("nested/one.txt", json.RootElement.GetProperty("files")[1].GetProperty("path").GetString());
         }
@@ -35,7 +34,7 @@ public sealed class ManagedContentTests : IDisposable
         var history = await ContentPackages.HistoryAsync("unused", p2); Assert.Contains("1.0.0", history); Assert.Contains("1.1.0", history); Assert.Contains("curated update", history);
         var workspace2 = Path.Combine(root, "workspace2"); await ContentPackages.UnpackAsync(p2, workspace2, null); await File.WriteAllTextAsync(Path.Combine(workspace2, "next.txt"), "next snapshot");
         var p3 = await ContentPackages.PackManagedAsync(workspace2, "1.2.0", Path.Combine(root, "three.nupkg"), null); Assert.True(File.Exists(p3));
-        using (var archive = ZipFile.OpenRead(p3)) { using var reader = new StreamReader(Assert.Single(archive.Entries, e => e.FullName == ".nuget-content/manifest.json").Open()); using var json = JsonDocument.Parse(await reader.ReadToEndAsync()); Assert.False(json.RootElement.GetProperty("history")[2].TryGetProperty("message", out _)); }
+        using (var archive = ZipFile.OpenRead(p3)) { using StreamReader reader = new(Assert.Single(archive.Entries, e => e.FullName == ".nuget-content/manifest.json").Open()); using var json = JsonDocument.Parse(await reader.ReadToEndAsync()); Assert.False(json.RootElement.GetProperty("history")[2].TryGetProperty("message", out _)); }
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p3));
     }
 
@@ -145,17 +144,22 @@ public sealed class ManagedContentTests : IDisposable
         {
             var top = schema.RootElement;
             Assert.Equal(1, top.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
-            Assert.Equal(new[] { "schemaVersion", "package", "files", "history" }, top.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
+            Assert.Equal(new[] { "schemaVersion", "package", "files", "history" },
+                    top.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
             Assert.False(top.GetProperty("additionalProperties").GetBoolean());
-            Assert.Equal(new[] { "id", "version" }, top.GetProperty("properties").GetProperty("package").GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
+            Assert.Equal(new[] { "id", "version" },
+                    top.GetProperty("properties").GetProperty("package").GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
         }
         var src = Path.Combine(root, "src"); Directory.CreateDirectory(src); await File.WriteAllTextAsync(Path.Combine(src, "x"), "x"); var p = Path.Combine(root, "good.nupkg"); await ContentPackages.PackInitialAsync("sample", "1.0.0", src, p);
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p));
-        var altered = Path.Combine(root, "altered.nupkg"); File.Copy(p, altered); using (var zip = ZipFile.Open(altered, ZipArchiveMode.Update)) { using var w = new StreamWriter(zip.GetEntry("contentFiles/any/any/x")!.Open()); w.Write("y"); }
+        var altered = Path.Combine(root, "altered.nupkg"); File.Copy(p, altered);
+        using (var zip = ZipFile.Open(altered, ZipArchiveMode.Update)) { using StreamWriter w = new(zip.GetEntry("contentFiles/any/any/x")!.Open()); w.Write("y"); }
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", altered));
-        var bad = Path.Combine(root, "bad.nupkg"); File.Copy(p, bad); using (var zip = ZipFile.Open(bad, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using var w = new StreamWriter(e.Open()); w.Write("{\"schemaVersion\":2}"); }
+        var bad = Path.Combine(root, "bad.nupkg"); File.Copy(p, bad);
+        using (var zip = ZipFile.Open(bad, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w.Write("{\"schemaVersion\":2}"); }
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", bad));
-        var malformedHistory = Path.Combine(root, "bad-history.nupkg"); File.Copy(p, malformedHistory); using (var zip = ZipFile.Open(malformedHistory, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using var w = new StreamWriter(e.Open()); w.Write("""{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":"0.9.0","changes":{"added":["x"],"modified":[],"deleted":[]}}]}"""); }
+        var malformedHistory = Path.Combine(root, "bad-history.nupkg"); File.Copy(p, malformedHistory);
+        using (var zip = ZipFile.Open(malformedHistory, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w.Write("""{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":"0.9.0","changes":{"added":["x"],"modified":[],"deleted":[]}}]}"""); }
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", malformedHistory));
     }
 
@@ -184,10 +188,11 @@ public sealed class ManagedContentTests : IDisposable
     [Fact]
     public async Task SchemaValidationRejectsMissingNullWrongTypedAndInvalidNestedProperties()
     {
-        var valid = """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":[],"deleted":[]}}]}""";
+        string valid = """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":[],"deleted":[]}}]}""";
         string[] malformed =
         [
-            valid.Replace("\"files\":[{\"path\":\"x\",\"size\":1,\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"}],", ""),
+            valid.Replace("\"files\":[{\"path\":\"x\",\"size\":1,\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"}],",
+                ""),
             """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[],"history":[]}""",
             valid.Replace("\"package\":{\"id\":\"sample\",\"version\":\"1.0.0\"}", "\"package\":null"),
             valid.Replace("\"size\":1", "\"size\":\"1\""),
@@ -205,7 +210,7 @@ public sealed class ManagedContentTests : IDisposable
             Assert.StartsWith("Manifest ", error.Message);
         }
 
-        var badInitial = """{"schemaVersion":1,"package":{"id":"sample","version":"1.1.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":["y"],"deleted":[]}},{"version":"1.1.0","previousVersion":"1.0.0","changes":{"added":[],"modified":[],"deleted":[]}}]}""";
+        string badInitial = """{"schemaVersion":1,"package":{"id":"sample","version":"1.1.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":["y"],"deleted":[]}},{"version":"1.1.0","previousVersion":"1.0.0","changes":{"added":[],"modified":[],"deleted":[]}}]}""";
         using var badInitialDocument = JsonDocument.Parse(badInitial);
         ContentPackages.ValidateManifestJson(badInitialDocument.RootElement);
         var badInitialManifest = JsonSerializer.Deserialize(badInitial, ManifestJsonContext.Default.Manifest)!;
@@ -226,8 +231,11 @@ public sealed class ManagedContentTests : IDisposable
         var payload = Path.Combine(source, "large.bin");
         await using (var output = new FileStream(payload, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
-            var block = new byte[64 * 1024];
-            for (var written = 0; written < fileSize; written += block.Length) await output.WriteAsync(block);
+            byte[64 * 1024] block = new byte[64 * 1024];
+            for (var written = 0; written < fileSize; written += block.Length)
+            {
+                await output.WriteAsync(block);
+            }
         }
         var package = Path.Combine(root, "large.nupkg");
         var destination = Path.Combine(root, "large-unpacked");
@@ -237,7 +245,8 @@ public sealed class ManagedContentTests : IDisposable
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", package));
         await ContentPackages.UnpackAsync(package, destination, null);
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
-        Assert.True(allocated < fileSize, $"Package operations allocated {allocated:N0} bytes for a {fileSize:N0}-byte file; payload-sized buffering is suspected.");
+        Assert.True(allocated < fileSize,
+                $"Package operations allocated {allocated:N0} bytes for a {fileSize:N0}-byte file; payload-sized buffering is suspected.");
         Assert.Equal(new FileInfo(payload).Length, new FileInfo(Path.Combine(destination, "large.bin")).Length);
         Assert.Equal(await ContentPackages.Sha256Async(payload), await ContentPackages.Sha256Async(Path.Combine(destination, "large.bin")));
     }
@@ -294,7 +303,10 @@ public sealed class ManagedContentTests : IDisposable
         var json = await RunCli(workspace, "status", "--json");
         Assert.Equal(0, json.ExitCode);
         Assert.Empty(json.Stderr);
-        using (var parsed = JsonDocument.Parse(json.Stdout)) Assert.True(parsed.RootElement.GetProperty("clean").GetBoolean());
+        using (var parsed = JsonDocument.Parse(json.Stdout))
+        {
+            Assert.True(parsed.RootElement.GetProperty("clean").GetBoolean());
+        }
 
         var text = await RunCli(workspace, "status");
         Assert.Equal("Clean" + Environment.NewLine, text.Stdout);
@@ -317,7 +329,7 @@ public sealed class ManagedContentTests : IDisposable
         using var archive = ZipFile.OpenRead(packagePath);
         var entry = Assert.Single(archive.Entries, x => x.FullName == ".nuget-content/manifest.json");
         await using var stream = entry.Open();
-        using var memory = new MemoryStream();
+        using MemoryStream memory = new();
         await stream.CopyToAsync(memory);
         return memory.ToArray();
     }
@@ -327,8 +339,8 @@ public sealed class ManagedContentTests : IDisposable
         var oldOut = Console.Out;
         var oldError = Console.Error;
         var oldDirectory = Environment.CurrentDirectory;
-        using var stdout = new StringWriter();
-        using var stderr = new StringWriter();
+        using StringWriter stdout = new();
+        using StringWriter stderr = new();
         try
         {
             Console.SetOut(stdout);
@@ -345,5 +357,11 @@ public sealed class ManagedContentTests : IDisposable
         }
     }
 
-    public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    public void Dispose()
+    {
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }
