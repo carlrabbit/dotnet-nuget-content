@@ -20,9 +20,7 @@ public sealed class M0006Tests : IDisposable
         Assert.Throws<CliException>(() => new PackageVersionSelection(null, "patch").Resolve("1.2.3+build.1"));
         Assert.Throws<CliException>(() => new PackageVersionSelection(null, "patch").Resolve("1.2"));
         Assert.Throws<CliException>(() => new PackageVersionSelection(null, "patch").Resolve("1.2.2147483647"));
-        Assert
-
-            .Throws<CliException>(() => PackageVersionSelection.FromOptions(new Dictionary<string, string> { ["version"] = "1.1.0", ["patch"] = "true" }));
+        Assert.Throws<CliException>(() => PackageVersionSelection.FromOptions(new Dictionary<string, string> { ["version"] = "1.1.0", ["patch"] = "true" }));
     }
 
     [Fact]
@@ -43,9 +41,7 @@ public sealed class M0006Tests : IDisposable
         Assert.Equal("1.0.0", manifest.History[^1].Version);
         Assert.Equal("0.9.8", manifest.History[^1].PreviousVersion);
         Assert.False(File.Exists(Path.Combine(root, "conflict.nupkg")));
-        Assert
-
-            .Equal(2,
+        Assert.Equal(2,
             await Run("pack", "--source", workspace, "--version", "1.1.0", "--patch", "--output", Path.Combine(root, "conflict.nupkg")));
         Assert.False(File.Exists(Path.Combine(root, "conflict.nupkg")));
     }
@@ -56,36 +52,22 @@ public sealed class M0006Tests : IDisposable
         var pinned = await MakePackage("sample.refs", "1.0.0", "old");
         var next = await MakePackage("sample.refs", "1.1.0", "next");
         Assert.Equal(0, await Run("workspace", "init"));
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
             await Run("workspace", "add", "--alias", "refs", "--package", Path.GetRelativePath(root, pinned).Replace('\\', '/')));
         var props = Path.Combine(root, "Directory.Packages.props");
         var projectA = Path.Combine(root, "a.csproj"); var projectB = Path.Combine(root, "b.fsproj"); var projectC = Path.Combine(root, "c.csproj");
-        await File
-
-            .WriteAllTextAsync(props,
+        await File.WriteAllTextAsync(props,
             "<Project>\r\n  <ItemGroup>\r\n    <PackageVersion Include=\"sample.refs\" Version=\"1.0.0\" />\r\n    <PackageVersion Include=\"unused.package\" Version=\"3.0.0\" />\r\n  </ItemGroup>\r\n</Project>\r\n");
         var unusedProps = Path.Combine(root, "unused"); Directory.CreateDirectory(unusedProps);
         var unusedCentral = Path.Combine(unusedProps, "Directory.Packages.props");
-        await File
-
-            .WriteAllTextAsync(unusedCentral,
+        await File.WriteAllTextAsync(unusedCentral,
             "<Project><ItemGroup><PackageVersion Include=\"sample.refs\" Version=\"9.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(projectA, "<Project><ItemGroup><PackageReference Include=\"sample.refs\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(projectB,
+        await File.WriteAllTextAsync(projectA, "<Project><ItemGroup><PackageReference Include=\"sample.refs\" /></ItemGroup></Project>");
+        await File.WriteAllTextAsync(projectB,
             "<Project><ItemGroup><PackageReference Include=\"sample.refs\"><Version>1.0.0</Version></PackageReference></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(projectC,
+        await File.WriteAllTextAsync(projectC,
             "<Project><ItemGroup><PackageReference Include=\"other.package\" Version=\"8.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(Path.Combine(unusedProps, "unused.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(unusedProps, "unused.csproj"),
             "<Project><ItemGroup><PackageReference Include=\"other.package\" Version=\"1.0.0\" /></ItemGroup></Project>");
         var beforeProps = await File.ReadAllBytesAsync(props); var beforeA = await File.ReadAllBytesAsync(projectA); var beforeB = await File.ReadAllBytesAsync(projectB);
 
@@ -93,23 +75,17 @@ public sealed class M0006Tests : IDisposable
         using (var pinnedPreview = JsonDocument.Parse(stdout))
         {
             Assert.Equal("1.0.0", pinnedPreview.RootElement.GetProperty("targetVersion").GetString());
-            Assert
-
-                .All(pinnedPreview.RootElement.GetProperty("changes").EnumerateArray(),
+            Assert.All(pinnedPreview.RootElement.GetProperty("changes").EnumerateArray(),
                 item => Assert.Equal("noOp", item.GetProperty("classification").GetString()));
         }
         Assert.Equal(1, await Run("workspace", "references", "update", "--alias", "refs", "--version", "1.1.0", "--json"));
         using (var unregistered = JsonDocument.Parse(stdout))
         {
-            Assert
-
-                .Contains(unregistered.RootElement.GetProperty("blockers").EnumerateArray(),
+            Assert.Contains(unregistered.RootElement.GetProperty("blockers").EnumerateArray(),
             x => x.GetProperty("code").GetString() == "packageVerification");
         }
 
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
     await Run("workspace",
             "add",
             "--alias",
@@ -134,12 +110,8 @@ public sealed class M0006Tests : IDisposable
         var referenceSchemaPath = Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0006-reference-update.schema.json");
         using (var schema = JsonDocument.Parse(await File.ReadAllTextAsync(referenceSchemaPath)))
         {
-            Assert
-
-                .Equal(1, schema.RootElement.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
-            Assert
-
-                .Equal("workspaceReferenceUpdate",
+            Assert.Equal(1, schema.RootElement.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
+            Assert.Equal("workspaceReferenceUpdate",
                 schema.RootElement.GetProperty("properties").GetProperty("kind").GetProperty("const").GetString());
             Assert.False(schema.RootElement.GetProperty("additionalProperties").GetBoolean());
         }
@@ -156,9 +128,7 @@ public sealed class M0006Tests : IDisposable
         Assert.Contains("Version=\"8.0.0\"", await File.ReadAllTextAsync(projectC));
         Assert.Contains("Version=\"9.0.0\"", await File.ReadAllTextAsync(unusedCentral));
         var duplicatePackage = Path.Combine(root, "feed", "duplicate-target.nupkg"); File.Copy(next, duplicatePackage);
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
     await Run("workspace",
             "add",
             "--alias",
@@ -170,18 +140,12 @@ public sealed class M0006Tests : IDisposable
         Assert.Equal(1, await Run("workspace", "references", "update", "--alias", "refs", "--version", "1.1.0", "--json"));
         using (var ambiguous = JsonDocument.Parse(stdout))
         {
-            Assert
-
-                .Contains(ambiguous.RootElement.GetProperty("blockers").EnumerateArray(),
+            Assert.Contains(ambiguous.RootElement.GetProperty("blockers").EnumerateArray(),
             x => x.GetProperty("code").GetString() == "packageVerification");
         }
 
-        Assert
-
-            .Equal("1.0.0",
-    JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement
-
-            .GetProperty("members")[0].GetProperty("version").GetString());
+        Assert.Equal("1.0.0",
+            JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[0].GetProperty("version").GetString());
         Assert.Equal("1.1.0", (await ContentPackages.ReadPackageForWorkspaceAsync(next)).Package.Version);
     }
 
@@ -192,9 +156,7 @@ public sealed class M0006Tests : IDisposable
         await MakePackage("sample.selected", "1.1.0", "new selected");
         var otherPackage = await MakePackage("sample.other", "2.0.0", "other member");
         Assert.Equal(0, await Run("workspace", "init"));
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
     await Run("workspace",
             "add",
             "--alias",
@@ -203,9 +165,7 @@ public sealed class M0006Tests : IDisposable
             Path.GetRelativePath(root, selectedOld).Replace('\\', '/'),
             "--directory",
             "managed/selected"));
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
     await Run("workspace",
             "add",
             "--alias",
@@ -235,9 +195,7 @@ public sealed class M0006Tests : IDisposable
         var workspaceMarker = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
         Assert.Equal(0, await Run("workspace", "status", "--all", "--json"));
         using var beforeStatus = JsonDocument.Parse(stdout);
-        var otherStatus = Assert
-
-            .Single(beforeStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText();
+        var otherStatus = Assert.Single(beforeStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText();
 
         Assert.Equal(0, await Run("workspace", "references", "update", "--alias", "selected", "--json"));
         using (var preview = JsonDocument.Parse(stdout))
@@ -266,12 +224,8 @@ public sealed class M0006Tests : IDisposable
         Assert.Equal(workspaceMarker, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
         Assert.Equal(0, await Run("workspace", "status", "--all", "--json"));
         using var afterStatus = JsonDocument.Parse(stdout);
-        Assert
-
-            .Equal(otherStatus,
-    Assert
-
-            .Single(afterStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText());
+        Assert.Equal(otherStatus,
+            Assert.Single(afterStatus.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other").GetRawText());
     }
 
     [Fact]
@@ -280,38 +234,22 @@ public sealed class M0006Tests : IDisposable
         var pinned = await MakePackage("sample.blocked", "1.0.0", "old");
         await MakePackage("sample.blocked", "1.1.0", "new");
         Assert.Equal(0, await Run("workspace", "init"));
-        Assert
-
-            .Equal(0,
+        Assert.Equal(0,
             await Run("workspace", "add", "--alias", "blocked", "--package", Path.GetRelativePath(root, pinned).Replace('\\', '/')));
         var good = Path.Combine(root, "good.csproj"); var conditional = Path.Combine(root, "conditional.csproj");
-        await File
-
-            .WriteAllTextAsync(good, "<Project><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(conditional,
+        await File.WriteAllTextAsync(good, "<Project><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /></ItemGroup></Project>");
+        await File.WriteAllTextAsync(conditional,
             "<Project><ItemGroup Condition=\"'$(Configuration)' == 'Debug'\"><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(Path.Combine(root, "dynamic.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(root, "dynamic.csproj"),
             "<Project><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"$(PackageVersion)\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(Path.Combine(root, "imported.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(root, "imported.csproj"),
             "<Project><Import Project=\"Directory.Build.props\" /><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(Path.Combine(root, "duplicate.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(root, "duplicate.csproj"),
             "<Project><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\" /></ItemGroup></Project>");
-        await File
-
-            .WriteAllTextAsync(Path.Combine(root, "malformed.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(root, "malformed.csproj"),
             "<Project><ItemGroup><PackageReference Include=\"sample.blocked\" Version=\"1.0.0\"></ItemGroup>");
         var before = await File.ReadAllBytesAsync(good);
-        Assert
-
-            .Equal(1, await Run("workspace", "references", "update", "--alias", "blocked", "--version", "1.1.0", "--apply", "--json"));
+        Assert.Equal(1, await Run("workspace", "references", "update", "--alias", "blocked", "--version", "1.1.0", "--apply", "--json"));
         using (var blocked = JsonDocument.Parse(stdout))
         {
             var codes = blocked.RootElement.GetProperty("blockers").EnumerateArray().Select(x => x.GetProperty("code").GetString()).ToHashSet();
@@ -350,21 +288,15 @@ public sealed class M0006Tests : IDisposable
         };
         IReadOnlyList<ProjectWorkspaceMember> registered = [member, nextMember];
 
-        var changed = await ConsumerReferenceUpdater
-
-            .CreatePlanAsync(root, member, registered, "1.1.0", true, async () => await File.AppendAllTextAsync(first, "<!-- external edit -->"));
+        var changed = await ConsumerReferenceUpdater.CreatePlanAsync(root, member, registered, "1.1.0", true, async () => await File.AppendAllTextAsync(first, "<!-- external edit -->"));
         Assert.False(changed.CanApply);
-        Assert
-
-            .Contains(changed.Blockers, b => b.Code == "writeFailure" && b.Message.Contains("Source changed", StringComparison.Ordinal));
+        Assert.Contains(changed.Blockers, b => b.Code == "writeFailure" && b.Message.Contains("Source changed", StringComparison.Ordinal));
         Assert.Contains("external edit", await File.ReadAllTextAsync(first));
         Assert.Contains("Version=\"1.0.0\"", await File.ReadAllTextAsync(first));
         Assert.Contains("Version=\"1.0.0\"", await File.ReadAllTextAsync(second));
 
         await File.WriteAllTextAsync(first, xml); await File.WriteAllTextAsync(second, xml);
-        var failedWrite = await ConsumerReferenceUpdater
-
-            .CreatePlanAsync(root,
+        var failedWrite = await ConsumerReferenceUpdater.CreatePlanAsync(root,
             member,
             registered,
             "1.1.0",

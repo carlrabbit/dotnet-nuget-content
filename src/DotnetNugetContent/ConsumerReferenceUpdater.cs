@@ -106,9 +106,7 @@ internal static class ConsumerReferenceUpdater
         Dictionary<string, (string Path, XDocument Xml, byte[] Bytes, string Hash, XElement Node, string OldVersion)> centralCandidates = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> centralConsumers = new(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var file in files.Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase))
-
-            .OrderBy(p => Relative(root, p), StringComparer.Ordinal))
+        foreach (var file in files.Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase)).OrderBy(p => Relative(root, p), StringComparer.Ordinal))
         {
             try
             {
@@ -146,9 +144,7 @@ internal static class ConsumerReferenceUpdater
             { AddBlocker(plan, Relative(root, file), "malformedProjectFile", $"Cannot safely inspect project configuration: {e.Message}"); }
         }
 
-        foreach (var file in files.Where(p => ProjectExtensions.Contains(Path.GetExtension(p)))
-
-            .OrderBy(p => Relative(root, p), StringComparer.Ordinal))
+        foreach (var file in files.Where(p => ProjectExtensions.Contains(Path.GetExtension(p))).OrderBy(p => Relative(root, p), StringComparer.Ordinal))
         {
             try
             {
@@ -198,9 +194,7 @@ internal static class ConsumerReferenceUpdater
                     {
                         var element = versionElements[0]; var old = element.Value.Trim();
                         if (IsDynamic(old) || !NuGetVersion.TryParse(old, out _)) { AddBlocker(plan, rel, "dynamicReferenceVersion", "PackageReference must have a supported literal NuGet version."); continue; }
-                        changes
-
-                            .Add(MakeChange(root,
+                        changes.Add(MakeChange(root,
                             file,
                             loaded.Xml,
                             loaded.Bytes,
@@ -265,13 +259,9 @@ internal static class ConsumerReferenceUpdater
             { AddBlocker(plan, Relative(root, file), "malformedProjectFile", $"Cannot safely inspect project declarations: {e.Message}"); }
         }
 
-        foreach (var pair in centralCandidates.Values.Where(x => centralConsumers.Contains(x.Path + "|" + member.PackageId))
-
-            .OrderBy(x => Relative(root, x.Path), StringComparer.Ordinal))
+        foreach (var pair in centralCandidates.Values.Where(x => centralConsumers.Contains(x.Path + "|" + member.PackageId)).OrderBy(x => Relative(root, x.Path), StringComparer.Ordinal))
         {
-            changes
-
-                .Add(MakeChange(root,
+            changes.Add(MakeChange(root,
                 pair.Path,
                 pair.Xml,
                 pair.Bytes,
@@ -293,7 +283,6 @@ internal static class ConsumerReferenceUpdater
         }
 
         plan.Changes = changes.OrderBy(c => c.RelativePath, StringComparer.Ordinal).ThenBy(c => c.SourceKind, StringComparer.Ordinal)
-
             .Select(c => new ReferenceUpdateChange
             {
                 Path = c.RelativePath,
@@ -316,9 +305,7 @@ internal static class ConsumerReferenceUpdater
 
                 foreach (var source in changes.Where(c => c.OldVersion != c.NewVersion))
                 {
-                    if (!CryptographicOperations
-
-                        .FixedTimeEquals(SHA256.HashData(await File.ReadAllBytesAsync(source.FullPath)), Convert.FromHexString(source.Fingerprint)))
+                    if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(await File.ReadAllBytesAsync(source.FullPath)), Convert.FromHexString(source.Fingerprint)))
                     {
                         throw new IOException($"Source changed after plan creation: {source.RelativePath}");
                     }
@@ -543,9 +530,7 @@ internal static class ConsumerReferenceUpdater
             }
             foreach (var item in staged)
             {
-                if (!CryptographicOperations
-
-                    .FixedTimeEquals(SHA256.HashData(await File.ReadAllBytesAsync(item.Change.FullPath)), Convert.FromHexString(item.Change.Fingerprint)))
+                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(await File.ReadAllBytesAsync(item.Change.FullPath)), Convert.FromHexString(item.Change.Fingerprint)))
                 {
                     throw new IOException($"Source changed before apply: {item.Change.RelativePath}");
                 }
@@ -581,7 +566,6 @@ internal static class ConsumerReferenceUpdater
     {
         var expectedName = change.SourceKind == "centralPackageVersion" ? "PackageVersion" : "PackageReference";
         return document.Descendants().Where(e => e.Name.LocalName == expectedName)
-
             .FirstOrDefault(e => ((string?)e.Attribute("Include"))?.Equals(change.PackageId, StringComparison.OrdinalIgnoreCase) == true &&
                 (change.IsAttribute ? ((string?)e.Attribute("Version")) == change.OldVersion : e.Elements().FirstOrDefault(v => v.Name.LocalName == "Version")?.Value.Trim() == change.OldVersion));
     }
@@ -619,9 +603,7 @@ internal static class ConsumerReferenceUpdater
         }
 
         using MemoryStream stream = new();
-        using (var writer = XmlWriter
-
-            .Create(stream,
+        using (var writer = XmlWriter.Create(stream,
             new XmlWriterSettings
             {
                 Encoding = encoding,

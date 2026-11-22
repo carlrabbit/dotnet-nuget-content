@@ -128,15 +128,11 @@ public sealed class ManagedContentTests : IDisposable
         var src = Path.Combine(root, "src"); Directory.CreateDirectory(src); await File.WriteAllTextAsync(Path.Combine(src, "data"), "x"); var pkg = Path.Combine(root, "base.nupkg"); await ContentPackages.PackInitialAsync("sample", "1.0.0", src, pkg); var ws = Path.Combine(root, "ws"); await ContentPackages.UnpackAsync(pkg, ws, null);
         var marker = Path.Combine(ws, ".nuget-content", "manifest.json"); var before = await File.ReadAllBytesAsync(marker);
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.1.0", null, null));
-        await Assert
-
-                .ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.0.0", Path.Combine(root, "bad.nupkg"), null));
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.0.0", Path.Combine(root, "bad.nupkg"), null));
         await File.WriteAllTextAsync(Path.Combine(ws, "data"), "changed"); var existing = Path.Combine(root, "existing.nupkg"); await File.WriteAllTextAsync(existing, "keep");
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.1.0", existing, null)); Assert.Equal("keep", await File.ReadAllTextAsync(existing));
         Directory.CreateDirectory(Path.Combine(ws, ".nuget-content", "collision")); await File.WriteAllTextAsync(Path.Combine(ws, ".nuget-content", "collision", "x"), "x");
-        await Assert
-
-                .ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.1.0", Path.Combine(root, "bad.nupkg"), null));
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackManagedAsync(ws, "1.1.0", Path.Combine(root, "bad.nupkg"), null));
         Assert.Equal(before, await File.ReadAllBytesAsync(marker)); Assert.False(File.Exists(Path.Combine(root, "bad.nupkg")));
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync(Path.Combine(ws, "nested"), null));
     }
@@ -144,23 +140,15 @@ public sealed class ManagedContentTests : IDisposable
     [Fact]
     public async Task PackageStatusRejectsMismatchAndUnsupportedManifest()
     {
-        using (var schema = JsonDocument
-
-                .Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/manifest-v1.schema.json"))))
+        using (var schema = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/manifest-v1.schema.json"))))
         {
             var top = schema.RootElement;
             Assert.Equal(1, top.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
-            Assert
-
-                    .Equal(new[] { "schemaVersion", "package", "files", "history" },
+            Assert.Equal(new[] { "schemaVersion", "package", "files", "history" },
                     top.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
             Assert.False(top.GetProperty("additionalProperties").GetBoolean());
-            Assert
-
-                    .Equal(new[] { "id", "version" },
-    top.GetProperty("properties").GetProperty("package").GetProperty("required").EnumerateArray()
-
-                    .Select(x => x.GetString()).ToArray());
+            Assert.Equal(new[] { "id", "version" },
+                    top.GetProperty("properties").GetProperty("package").GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
         }
         var src = Path.Combine(root, "src"); Directory.CreateDirectory(src); await File.WriteAllTextAsync(Path.Combine(src, "x"), "x"); var p = Path.Combine(root, "good.nupkg"); await ContentPackages.PackInitialAsync("sample", "1.0.0", src, p);
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", p));
@@ -171,12 +159,7 @@ public sealed class ManagedContentTests : IDisposable
         using (var zip = ZipFile.Open(bad, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w.Write("{\"schemaVersion\":2}"); }
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", bad));
         var malformedHistory = Path.Combine(root, "bad-history.nupkg"); File.Copy(p, malformedHistory);
-        using (var zip = ZipFile.Open(malformedHistory, ZipArchiveMode.Update))
-        {
-            zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w
-
-                    .Write("""{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":"0.9.0","changes":{"added":["x"],"modified":[],"deleted":[]}}]}""");
-        }
+        using (var zip = ZipFile.Open(malformedHistory, ZipArchiveMode.Update)) { zip.GetEntry(".nuget-content/manifest.json")!.Delete(); var e = zip.CreateEntry(".nuget-content/manifest.json"); using StreamWriter w = new(e.Open()); w.Write("""{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":"0.9.0","changes":{"added":["x"],"modified":[],"deleted":[]}}]}"""); }
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.StatusAsync("unused", malformedHistory));
     }
 
@@ -208,9 +191,7 @@ public sealed class ManagedContentTests : IDisposable
         string valid = """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[{"path":"x","size":1,"sha256":"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"}],"history":[{"version":"1.0.0","previousVersion":null,"changes":{"added":["x"],"modified":[],"deleted":[]}}]}""";
         string[] malformed =
         [
-            valid
-
-                .Replace("\"files\":[{\"path\":\"x\",\"size\":1,\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"}],",
+            valid.Replace("\"files\":[{\"path\":\"x\",\"size\":1,\"sha256\":\"2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881\"}],",
                 ""),
             """{"schemaVersion":1,"package":{"id":"sample","version":"1.0.0"},"files":[],"history":[]}""",
             valid.Replace("\"package\":{\"id\":\"sample\",\"version\":\"1.0.0\"}", "\"package\":null"),
@@ -235,9 +216,7 @@ public sealed class ManagedContentTests : IDisposable
         var badInitialManifest = JsonSerializer.Deserialize(badInitial, ManifestJsonContext.Default.Manifest)!;
         var semanticError = Assert.Throws<CliException>(() => ContentPackages.ValidateManifest(badInitialManifest));
         Assert.Contains("Initial history", semanticError.Message);
-        var badPredecessor = badInitial.Replace("\"previousVersion\":null", "\"previousVersion\":\"0.9.0\"")
-
-                .Replace("\"modified\":[\"y\"]", "\"modified\":[]");
+        var badPredecessor = badInitial.Replace("\"previousVersion\":null", "\"previousVersion\":\"0.9.0\"").Replace("\"modified\":[\"y\"]", "\"modified\":[]");
         var badPredecessorManifest = JsonSerializer.Deserialize(badPredecessor, ManifestJsonContext.Default.Manifest)!;
         var predecessorError = Assert.Throws<CliException>(() => ContentPackages.ValidateManifest(badPredecessorManifest));
         Assert.Contains("Initial history", predecessorError.Message);
@@ -266,14 +245,10 @@ public sealed class ManagedContentTests : IDisposable
         Assert.StartsWith("Package valid:", await ContentPackages.StatusAsync("unused", package));
         await ContentPackages.UnpackAsync(package, destination, null);
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
-        Assert
-
-                .True(allocated < fileSize,
+        Assert.True(allocated < fileSize,
                 $"Package operations allocated {allocated:N0} bytes for a {fileSize:N0}-byte file; payload-sized buffering is suspected.");
         Assert.Equal(new FileInfo(payload).Length, new FileInfo(Path.Combine(destination, "large.bin")).Length);
-        Assert
-
-                .Equal(await ContentPackages.Sha256Async(payload), await ContentPackages.Sha256Async(Path.Combine(destination, "large.bin")));
+        Assert.Equal(await ContentPackages.Sha256Async(payload), await ContentPackages.Sha256Async(Path.Combine(destination, "large.bin")));
     }
 
     [Fact]
@@ -308,9 +283,7 @@ public sealed class ManagedContentTests : IDisposable
 
         var history = JsonDocument.Parse(await ContentPackages.HistoryJsonAsync(workspace, null));
         Assert.Equal("1.0.0", history.RootElement.GetProperty("package").GetProperty("version").GetString());
-        Assert
-
-                .Equal(JsonValueKind.Null, history.RootElement.GetProperty("history")[0].GetProperty("previousVersion").ValueKind);
+        Assert.Equal(JsonValueKind.Null, history.RootElement.GetProperty("history")[0].GetProperty("previousVersion").ValueKind);
         Assert.False(history.RootElement.GetProperty("history")[0].TryGetProperty("message", out _));
         var packageHistory = JsonDocument.Parse(await ContentPackages.HistoryJsonAsync("unused", package));
         Assert.Single(packageHistory.RootElement.GetProperty("history").EnumerateArray());

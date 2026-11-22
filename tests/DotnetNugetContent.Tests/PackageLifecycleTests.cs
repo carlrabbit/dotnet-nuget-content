@@ -27,9 +27,7 @@ public sealed class PackageLifecycleTests : IDisposable
 
         Assert.Equal(textBytes, await File.ReadAllBytesAsync(Path.Combine(destination, "nested", "deeper", "readme.txt")));
         Assert.Equal(binaryBytes, await File.ReadAllBytesAsync(Path.Combine(destination, "nested", "payload.bin")));
-        Assert
-
-                .Equal(Convert.ToHexString(SHA256.HashData(textBytes)),
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(textBytes)),
                 await ContentPackages.Sha256Async(Path.Combine(destination, "nested", "deeper", "readme.txt")));
         using PackageArchiveReader reader = new(package);
         using var nuspecStream = reader.GetNuspec();
@@ -51,9 +49,7 @@ public sealed class PackageLifecycleTests : IDisposable
         Directory.CreateDirectory(existing);
         await File.WriteAllTextAsync(Path.Combine(existing, "keep.txt"), "keep");
 
-        await Assert
-
-                .ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(package, Path.Combine(_root, "bad-hash"), new string('0', 64)));
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(package, Path.Combine(_root, "bad-hash"), new string('0', 64)));
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(package, existing, null));
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(existing, "keep.txt")));
         Assert.False(Directory.Exists(Path.Combine(_root, "bad-hash")));
@@ -65,12 +61,8 @@ public sealed class PackageLifecycleTests : IDisposable
         var source = Path.Combine(_root, "source");
         Directory.CreateDirectory(source);
         await File.WriteAllTextAsync(Path.Combine(source, "file.txt"), "value");
-        await Assert
-
-                .ThrowsAsync<CliException>(() => ContentPackages.PackAsync("../bad", "1.0.0", source, Path.Combine(_root, "bad-id.nupkg")));
-        await Assert
-
-                .ThrowsAsync<CliException>(() => ContentPackages.PackAsync("valid", "1.*", source, Path.Combine(_root, "bad-version.nupkg")));
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackAsync("../bad", "1.0.0", source, Path.Combine(_root, "bad-id.nupkg")));
+        await Assert.ThrowsAsync<CliException>(() => ContentPackages.PackAsync("valid", "1.*", source, Path.Combine(_root, "bad-version.nupkg")));
 
         var malformed = Path.Combine(_root, "malformed.nupkg");
         await File.WriteAllTextAsync(malformed, "not a ZIP package");
@@ -94,9 +86,7 @@ public sealed class PackageLifecycleTests : IDisposable
         Assert.Equal(1, nuspecError.ExitCode);
         Assert.False(Directory.Exists(invalidNuspecOutput));
 
-        await Assert
-
-                .ThrowsAsync<ArgumentNullException>(() => ContentPackages.UnpackAsync(null!, Path.Combine(_root, "unexpected-error-out"), null));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => ContentPackages.UnpackAsync(null!, Path.Combine(_root, "unexpected-error-out"), null));
     }
 
     [Fact]
@@ -122,9 +112,7 @@ public sealed class PackageLifecycleTests : IDisposable
             }
             var nuspec = zip.CreateEntry("duplicate.nuspec");
             await using StreamWriter writer = new(nuspec.Open());
-            await writer
-
-                    .WriteAsync("""
+            await writer.WriteAsync("""
                 <?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd"><metadata><id>duplicate</id><version>1.0.0</version><authors>test</authors><description>test</description></metadata></package>
                 """);
         }
@@ -146,9 +134,7 @@ public sealed class PackageLifecycleTests : IDisposable
             var nuspec = zip.CreateEntry("malicious.nuspec");
             await using (var writer = new StreamWriter(nuspec.Open()))
             {
-                await writer
-
-                        .WriteAsync("""
+                await writer.WriteAsync("""
                     <?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd"><metadata><id>malicious</id><version>1.0.0</version><authors>test</authors><description>test</description></metadata></package>
                     """);
             }
@@ -186,9 +172,7 @@ public sealed class PackageLifecycleTests : IDisposable
             await File.WriteAllTextAsync(file, "content");
             Assert.Equal(1, await Cli.RunAsync(["hash", "--path", file, "--expect", new string('0', 64)]));
             Assert.Equal(string.Empty, output.ToString());
-            Assert
-
-                    .Equal($"error: SHA-256 mismatch for '{file}'. Expected {new string('0', 64)}; actual {Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file)))}.{Environment.NewLine}",
+            Assert.Equal($"error: SHA-256 mismatch for '{file}'. Expected {new string('0', 64)}; actual {Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file)))}.{Environment.NewLine}",
                     error.ToString());
             error.GetStringBuilder().Clear();
             Assert.Equal(2, await Cli.RunAsync(["hash", "--path", file, "--typo", "value"]));

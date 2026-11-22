@@ -238,7 +238,6 @@ internal static class ProjectWorkspace
     {
         Ensure(options, "workspace", "json"); var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
         var members = manifest.Members.OrderBy(m => m.Alias, StringComparer.OrdinalIgnoreCase).ThenBy(m => m.Alias, StringComparer.Ordinal)
-
             .Select(m => new WorkspaceListMemberResult
             {
                 Alias = m.Alias,
@@ -250,11 +249,7 @@ internal static class ProjectWorkspace
             }).ToList();
         if (options.ContainsKey("json"))
         {
-            Console
-
-                .WriteLine(JsonSerializer
-
-                .Serialize(new WorkspaceListResult { Members = members }, ProjectWorkspaceJsonContext.Default.WorkspaceListResult));
+            Console.WriteLine(JsonSerializer.Serialize(new WorkspaceListResult { Members = members }, ProjectWorkspaceJsonContext.Default.WorkspaceListResult));
         }
         else if (members.Count == 0)
         {
@@ -264,9 +259,7 @@ internal static class ProjectWorkspace
         {
             foreach (var m in members)
             {
-                Console
-
-                    .WriteLine($"{m.Alias}: {m.PackageId} {m.Version} | {m.PackageFile} | {m.Directory} | {(m.DirectoryPresent ? "present" : "not unpacked")}");
+                Console.WriteLine($"{m.Alias}: {m.PackageId} {m.Version} | {m.PackageFile} | {m.Directory} | {(m.DirectoryPresent ? "present" : "not unpacked")}");
             }
         }
 
@@ -333,20 +326,14 @@ internal static class ProjectWorkspace
         }
         if (options.ContainsKey("json"))
         {
-            Console
-
-                .WriteLine(JsonSerializer
-
-                .Serialize(new ProjectWorkspaceStatusResult { Members = results },
+            Console.WriteLine(JsonSerializer.Serialize(new ProjectWorkspaceStatusResult { Members = results },
             ProjectWorkspaceJsonContext.Default.ProjectWorkspaceStatusResult));
         }
         else
         {
             foreach (var r in results)
             {
-                Console
-
-                    .WriteLine($"{r.Alias}: {r.State}" + (r.Error is null ? "" : $" ({r.Error})") + (r.Added.Count + r.Modified.Count + r.Deleted.Count == 0 ? "" : $" | +[{string.Join(",", r.Added)}] ~[{string.Join(",", r.Modified)}] -[{string.Join(",", r.Deleted)}]"));
+                Console.WriteLine($"{r.Alias}: {r.State}" + (r.Error is null ? "" : $" ({r.Error})") + (r.Added.Count + r.Modified.Count + r.Deleted.Count == 0 ? "" : $" | +[{string.Join(",", r.Added)}] ~[{string.Join(",", r.Modified)}] -[{string.Join(",", r.Deleted)}]"));
             }
         }
 
@@ -378,18 +365,12 @@ internal static class ProjectWorkspace
         else
         {
             // Legacy managed-pack output is the member directory's parent; keep it outside every member root.
-            var candidate = Path
-
-                .Combine(Directory.GetParent(dir)?.FullName ?? root,
+            var candidate = Path.Combine(Directory.GetParent(dir)?.FullName ?? root,
                 $"{m.PackageId}.{selection.Resolve(m.Version).ToNormalizedString()}.nupkg");
             EnsurePackageOutputOutsideMembers(root, candidate, manifest.Members);
         }
-        var created = await ContentPackages
-
-            .PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
-        Console.WriteLine($"Created {created}"); Console
-
-            .WriteLine($"Workspace pin remains {m.PackageId} {m.Version}; use 'workspace set --alias {m.Alias} --package <new-package>' to advance it."); return 0;
+        var created = await ContentPackages.PackManagedAsync(dir, selection, output, options.GetValueOrDefault("message"), ManagedPackBaselineBehavior.Preserve);
+        Console.WriteLine($"Created {created}"); Console.WriteLine($"Workspace pin remains {m.PackageId} {m.Version}; use 'workspace set --alias {m.Alias} --package <new-package>' to advance it."); return 0;
     }
 
     private static async Task<int> SetAsync(Dictionary<string, string> options)
@@ -447,9 +428,7 @@ internal static class ProjectWorkspace
 
         var old = m.PackageFile; var oldVersion = m.Version; m.PackageFile = rel; m.Version = next.Package.Version; m.Directory = nextDirectory;
         ValidateMembers(manifest.Members, root); await WriteAtomicAsync(path, manifest);
-        Console
-
-            .WriteLine($"Updated {m.Alias}: {m.PackageId} {oldVersion} -> {m.Version} ({old} -> {rel}; directory {oldDirectory} -> {nextDirectory})"); return 0;
+        Console.WriteLine($"Updated {m.Alias}: {m.PackageId} {oldVersion} -> {m.Version} ({old} -> {rel}; directory {oldDirectory} -> {nextDirectory})"); return 0;
     }
 
     private static async Task<int> UsageAsync(Dictionary<string, string> options)
@@ -556,9 +535,7 @@ internal static class ProjectWorkspace
         bool pinUpdated = false;
         try
         {
-            createdPackage = await ContentPackages
-
-                .PackManagedAsync(currentDir,
+            createdPackage = await ContentPackages.PackManagedAsync(currentDir,
                 selection,
                 packagePath,
                 options.GetValueOrDefault("message"),
@@ -594,9 +571,7 @@ internal static class ProjectWorkspace
         }
 
         Console.WriteLine($"Advanced {m.Alias}: {m.PackageId} {m.Version} -> {nextVersion}");
-        Console
-
-            .WriteLine($"Package: {packageRel}; extracted directory {m.Directory} removed. Run 'workspace unpack --alias {m.Alias}' to edit again.");
+        Console.WriteLine($"Package: {packageRel}; extracted directory {m.Directory} removed. Run 'workspace unpack --alias {m.Alias}' to edit again.");
         return 0;
     }
 
@@ -657,9 +632,7 @@ internal static class ProjectWorkspace
         {
             foreach (var m in result.Members)
             {
-                Console
-
-                    .WriteLine($"{m.Alias}: {m.PackageId} pinned {m.Version} | {m.State} | package {m.PackageFile} | directory {m.Directory}");
+                Console.WriteLine($"{m.Alias}: {m.PackageId} pinned {m.Version} | {m.State} | package {m.PackageFile} | directory {m.Directory}");
                 foreach (var c in m.Consumers)
                 {
                     Console.WriteLine($"  consumer {c.Path}: {c.Kind} {c.State}{(c.Version is null ? "" : " (" + c.Version + ")")}");
@@ -754,9 +727,7 @@ internal static class ProjectWorkspace
             throw new CliException("Cleanup target is outside the permitted workspace scope.", 1);
         }
 
-        if (!string
-
-            .Equals(Directory.GetParent(target)?.FullName, Directory.GetParent(active)?.FullName, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(Directory.GetParent(target)?.FullName, Directory.GetParent(active)?.FullName, StringComparison.OrdinalIgnoreCase))
         {
             throw new CliException("Cleanup target must be an immediate sibling of the selected member directory.", 1);
         }
@@ -839,14 +810,12 @@ internal static class ProjectWorkspace
                     continue;
                 }
 
-                result
-
-                    .Add(new WorkspaceCleanupCandidate
-                    {
-                        Directory = rel,
-                        Version = baseline.Package.Version,
-                        State = await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(dir) ? "clean" : "modified"
-                    });
+                result.Add(new WorkspaceCleanupCandidate
+                {
+                    Directory = rel,
+                    Version = baseline.Package.Version,
+                    State = await ContentPackages.IsWorkspaceCleanForWorkspaceAsync(dir) ? "clean" : "modified"
+                });
             }
             catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException or JsonException) { }
         }
@@ -879,12 +848,8 @@ internal static class ProjectWorkspace
                 diagnostics.Add($"Project source changed during inspection: {relPath}.");
                 return unresolved;
             }
-            var references = xml.Descendants()
-
-                .Where(x => x.Name.LocalName == "PackageReference" &&
-                string
-
-                .Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var references = xml.Descendants().Where(x => x.Name.LocalName == "PackageReference" &&
+                string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
             if (references.Length == 0)
             {
                 return null;
@@ -892,17 +857,13 @@ internal static class ProjectWorkspace
 
             if (references.Length > 1)
             {
-                diagnostics
-
-                    .Add($"Ambiguous package references for {packageId} in {relPath}: found {references.Length} matching declarations.");
+                diagnostics.Add($"Ambiguous package references for {packageId} in {relPath}: found {references.Length} matching declarations.");
                 return unresolved;
             }
             var reference = references[0];
             if (reference.AncestorsAndSelf().Any(x => x.Attribute("Condition") is not null))
             {
-                diagnostics
-
-                    .Add($"Conditional package reference for {packageId} in {relPath} cannot be resolved without MSBuild evaluation.");
+                diagnostics.Add($"Conditional package reference for {packageId} in {relPath} cannot be resolved without MSBuild evaluation.");
                 return unresolved;
             }
             var version = (string?)reference.Attribute("Version") ?? reference.Elements().FirstOrDefault(x => x.Name.LocalName == "Version")?.Value;
@@ -929,12 +890,8 @@ internal static class ProjectWorkspace
                             diagnostics.Add($"Project source changed during inspection: {declarationPath}.");
                             return unresolved;
                         }
-                        var declarations = propsXml.Descendants()
-
-                            .Where(x => x.Name.LocalName == "PackageVersion" &&
-                            string
-
-                            .Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
+                        var declarations = propsXml.Descendants().Where(x => x.Name.LocalName == "PackageVersion" &&
+                            string.Equals((string?)x.Attribute("Include") ?? (string?)x.Attribute("Update"), packageId, StringComparison.OrdinalIgnoreCase)).ToArray();
                         if (declarations.Length > 1 || declarations.Any(x => x.AncestorsAndSelf().Any(a => a.Attribute("Condition") is not null)))
                         {
                             diagnostics.Add($"Ambiguous or conditional central version for {packageId} in {declarationPath}.");
@@ -982,9 +939,7 @@ internal static class ProjectWorkspace
         var options = Parse(args[1..]); Ensure(options, "alias", "version", "workspace", "apply", "json");
         var root = ResolveRoot(options.GetValueOrDefault("workspace")); var (_, manifest) = await ReadRootAsync(root);
         var member = FindMember(manifest, Required(options, "alias"));
-        var plan = await ConsumerReferenceUpdater
-
-            .CreatePlanAsync(root, member, manifest.Members, options.GetValueOrDefault("version"), options.ContainsKey("apply"));
+        var plan = await ConsumerReferenceUpdater.CreatePlanAsync(root, member, manifest.Members, options.GetValueOrDefault("version"), options.ContainsKey("apply"));
         if (options.ContainsKey("json"))
         {
             Console.WriteLine(JsonSerializer.Serialize(plan, ReferenceUpdateJsonContext.Default.ReferenceUpdatePlan));
@@ -994,9 +949,7 @@ internal static class ProjectWorkspace
             Console.WriteLine($"{member.PackageId} {plan.TargetVersion}: {(plan.Applied ? "applied" : "preview")}");
             foreach (var change in plan.Changes)
             {
-                Console
-
-                    .WriteLine($"  {change.Classification}: {change.Path} {change.OldVersion} -> {change.NewVersion} ({change.SourceKind})");
+                Console.WriteLine($"  {change.Classification}: {change.Path} {change.OldVersion} -> {change.NewVersion} ({change.SourceKind})");
             }
 
             foreach (var blocker in plan.Blockers)
@@ -1081,9 +1034,7 @@ internal static class ProjectWorkspace
         }
         Dictionary<string, Dictionary<string, string>> centralFiles = new(StringComparer.OrdinalIgnoreCase);
         var centralDeclarations = selectedIds.ToDictionary(x => x, _ => new List<(string Version, string Path)>(), StringComparer.OrdinalIgnoreCase);
-        foreach (var file in projectFiles.Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase))
-
-            .OrderBy(p => Relative(root, p), StringComparer.Ordinal))
+        foreach (var file in projectFiles.Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase)).OrderBy(p => Relative(root, p), StringComparer.Ordinal))
         {
             try
             {
@@ -1108,9 +1059,7 @@ internal static class ProjectWorkspace
             }
             catch (Exception e) when (e is XmlException or IOException or UnauthorizedAccessException) { diagnostics.Add($"Malformed project configuration {Relative(root, file)}: {e.Message}"); }
         }
-        var projects = projectFiles.Where(p => ProjectExtensions.Contains(Path.GetExtension(p)))
-
-            .OrderBy(p => Relative(root, p), StringComparer.Ordinal).ToList();
+        var projects = projectFiles.Where(p => ProjectExtensions.Contains(Path.GetExtension(p))).OrderBy(p => Relative(root, p), StringComparer.Ordinal).ToList();
         foreach (var file in projects)
         {
             try
@@ -1139,9 +1088,7 @@ internal static class ProjectWorkspace
                     {
                         if (nearestCentral.TryGetValue(id, out var centralVersion))
                         {
-                            sites
-
-                                .Add(new() { Path = rel, Classification = "directPackageReferenceWithCentralVersion", CentralVersion = centralVersion });
+                            sites.Add(new() { Path = rel, Classification = "directPackageReferenceWithCentralVersion", CentralVersion = centralVersion });
                         }
                         else
                         {
@@ -1202,14 +1149,10 @@ internal static class ProjectWorkspace
 
             if (centralDeclarations.TryGetValue(m.PackageId, out var declarations))
             {
-                usage.CentralVersionDeclarations = declarations.Distinct().OrderBy(x => x.Path, StringComparer.Ordinal)
-
-                    .Select(x => new WorkspaceUsageSite { Path = x.Path, Classification = "centralVersionDeclarationNotUseByItself", CentralVersion = x.Version }).ToList();
+                usage.CentralVersionDeclarations = declarations.Distinct().OrderBy(x => x.Path, StringComparer.Ordinal).Select(x => new WorkspaceUsageSite { Path = x.Path, Classification = "centralVersionDeclarationNotUseByItself", CentralVersion = x.Version }).ToList();
             }
 
-            usage.PreviousAssetsEvidence = assetsFound.Where(a => a.Id.Equals(m.PackageId, StringComparison.OrdinalIgnoreCase))
-
-                .Select(a => new WorkspaceAssetEvidence { Project = a.Project, AssetsFile = a.Assets, Version = a.Version }).OrderBy(a => a.Project, StringComparer.Ordinal).ThenBy(a => a.Version, StringComparer.Ordinal).ToList();
+            usage.PreviousAssetsEvidence = assetsFound.Where(a => a.Id.Equals(m.PackageId, StringComparison.OrdinalIgnoreCase)).Select(a => new WorkspaceAssetEvidence { Project = a.Project, AssetsFile = a.Assets, Version = a.Version }).OrderBy(a => a.Project, StringComparer.Ordinal).ThenBy(a => a.Version, StringComparer.Ordinal).ToList();
             result.Members.Add(usage);
         }
         result.Diagnostics = diagnostics.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
@@ -1355,9 +1298,7 @@ internal static class ProjectWorkspace
                 throw new CliException($"Duplicate workspace alias '{m.Alias}'.", 1);
             }
 
-            if (!System.Text.RegularExpressions.Regex
-
-                .IsMatch(m.PackageId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            if (!System.Text.RegularExpressions.Regex.IsMatch(m.PackageId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
             {
                 throw new CliException($"Invalid package ID '{m.PackageId}'.", 1);
             }

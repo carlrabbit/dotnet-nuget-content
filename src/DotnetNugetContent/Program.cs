@@ -37,15 +37,11 @@ internal static class Cli
                             throw new CliException("Initial package creation requires --version.");
                         }
 
-                        await ContentPackages
-
-                        .PackInitialAsync(Required(options, "id"), selection.ExplicitVersion, Required(options, "source"), Required(options, "output")); Console.Out.WriteLine($"Created {Path.GetFullPath(options["output"])}");
+                        await ContentPackages.PackInitialAsync(Required(options, "id"), selection.ExplicitVersion, Required(options, "source"), Required(options, "output")); Console.Out.WriteLine($"Created {Path.GetFullPath(options["output"])}");
                     }
                     else
                     {
-                        var output = await ContentPackages
-
-                        .PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory,
+                        var output = await ContentPackages.PackManagedAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory,
                         selection,
                         options.GetValueOrDefault("output"),
                         options.GetValueOrDefault("message"),
@@ -54,40 +50,28 @@ internal static class Cli
                     return 0;
                 case "unpack":
                     EnsureOptions(options, "package", "destination", "sha256");
-                    await ContentPackages
-
-                    .UnpackAsync(Required(options, "package"), Required(options, "destination"), options.GetValueOrDefault("sha256"));
+                    await ContentPackages.UnpackAsync(Required(options, "package"), Required(options, "destination"), options.GetValueOrDefault("sha256"));
                     Console.Out.WriteLine($"Extracted to {Path.GetFullPath(options["destination"])}"); return 0;
                 case "status":
                     EnsureOptions(options, "source", "package", "json");
                     EnsureExclusive(options, "source", "package");
                     if (options.ContainsKey("json"))
                     {
-                        var result = await ContentPackages
-
-                        .StatusJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
+                        var result = await ContentPackages.StatusJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
                         Console.Out.WriteLine(result);
                     }
                     else
                     {
-                        var status = await ContentPackages
-
-                        .StatusAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
+                        var status = await ContentPackages.StatusAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"));
                         Console.Out.WriteLine(status);
                     }
                     return 0;
                 case "history":
                     EnsureOptions(options, "source", "package", "json");
                     EnsureExclusive(options, "source", "package");
-                    Console.Out
-
-                    .WriteLine(options.ContainsKey("json")
-                        ? await ContentPackages
-
-                    .HistoryJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"))
-                        : await ContentPackages
-
-                    .HistoryAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package")));
+                    Console.Out.WriteLine(options.ContainsKey("json")
+                        ? await ContentPackages.HistoryJsonAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package"))
+                        : await ContentPackages.HistoryAsync(options.GetValueOrDefault("source") ?? Environment.CurrentDirectory, options.GetValueOrDefault("package")));
                     return 0;
                 case "hash":
                     EnsureOptions(options, "path", "expect"); var path = Path.GetFullPath(Required(options, "path"));
@@ -243,9 +227,7 @@ internal static class ContentPackages
             throw new CliException("Source directory must contain at least one file.", 1);
         }
 
-        Manifest manifest = new() { Package = new() { Id = id, Version = version.ToNormalizedString() }, Files = files }; manifest.History
-
-            .Add(new() { Version = version.ToNormalizedString(), Changes = new() { Added = files.Select(f => f.Path).ToList() } });
+        Manifest manifest = new() { Package = new() { Id = id, Version = version.ToNormalizedString() }, Files = files }; manifest.History.Add(new() { Version = version.ToNormalizedString(), Changes = new() { Added = files.Select(f => f.Path).ToList() } });
         await CreatePackageAsync(manifest, source, outputPath);
     }
     public static async Task<string> PackManagedAsync(
@@ -294,19 +276,15 @@ internal static class ContentPackages
             Files = files,
             History = baseline.History.ToList()
         };
-        manifest.History
-
-            .Add(new()
-            {
-                Version = version.ToNormalizedString(),
-                PreviousVersion = baseline.Package.Version,
-                Changes = changes,
-                Message = message
-            });
+        manifest.History.Add(new()
+        {
+            Version = version.ToNormalizedString(),
+            PreviousVersion = baseline.Package.Version,
+            Changes = changes,
+            Message = message
+        });
         var workspaceParent = Directory.GetParent(root)?.FullName ?? root;
-        var output = Path
-
-            .GetFullPath(outputPath ?? Path.Combine(workspaceParent, $"{manifest.Package.Id}.{version.ToNormalizedString()}.nupkg"));
+        var output = Path.GetFullPath(outputPath ?? Path.Combine(workspaceParent, $"{manifest.Package.Id}.{version.ToNormalizedString()}.nupkg"));
         if (IsPathWithin(root, output))
         {
             throw new CliException("Managed package output cannot be inside the workspace.", 1);
@@ -397,33 +375,25 @@ internal static class ContentPackages
         if (package is not null)
         {
             var (manifest, files) = await ReadPackageManifestAsync(Path.GetFullPath(package), true);
-            return JsonSerializer
-
-                .Serialize(new PackageStatusResult { Package = new() { Id = manifest.Package.Id, Version = manifest.Package.Version }, FileCount = files.Count },
+            return JsonSerializer.Serialize(new PackageStatusResult { Package = new() { Id = manifest.Package.Id, Version = manifest.Package.Version }, FileCount = files.Count },
                 ManifestJsonContext.Default.PackageStatusResult);
         }
         root = ResolveWorkspace(root);
         var baseline = await ReadManifestFileAsync(Path.Combine(root, ManifestPath));
         var diff = Diff(baseline.Files, await InventoryAsync(root));
         var changes = ToJsonChanges(diff);
-        return JsonSerializer
-
-            .Serialize(new WorkspaceStatusResult
-            {
-                Package = new() { Id = baseline.Package.Id, Version = baseline.Package.Version },
-                Clean = changes.Added.Count + changes.Modified.Count + changes.Deleted.Count == 0,
-                Changes = changes
-            },
+        return JsonSerializer.Serialize(new WorkspaceStatusResult
+        {
+            Package = new() { Id = baseline.Package.Id, Version = baseline.Package.Version },
+            Clean = changes.Added.Count + changes.Modified.Count + changes.Deleted.Count == 0,
+            Changes = changes
+        },
     ManifestJsonContext.Default.WorkspaceStatusResult);
     }
     public static async Task<string> HistoryAsync(string root, string? package)
     {
-        var manifest = package is null ? await ReadManifestFileAsync(Path.Combine(ResolveWorkspace(root), ManifestPath)) : (await ReadPackageManifestAsync(Path.GetFullPath(package), true)).Manifest; return string
-
-            .Join(Environment.NewLine,
-    manifest.History
-
-            .Select(h => $"{h.Version} <- {h.PreviousVersion ?? "(initial)"} | +[{string.Join(",", h.Changes.Added)}] ~[{string.Join(",", h.Changes.Modified)}] -[{string.Join(",", h.Changes.Deleted)}]" + (h.Message is null ? "" : $" | {h.Message}")));
+        var manifest = package is null ? await ReadManifestFileAsync(Path.Combine(ResolveWorkspace(root), ManifestPath)) : (await ReadPackageManifestAsync(Path.GetFullPath(package), true)).Manifest; return string.Join(Environment.NewLine,
+            manifest.History.Select(h => $"{h.Version} <- {h.PreviousVersion ?? "(initial)"} | +[{string.Join(",", h.Changes.Added)}] ~[{string.Join(",", h.Changes.Modified)}] -[{string.Join(",", h.Changes.Deleted)}]" + (h.Message is null ? "" : $" | {h.Message}")));
     }
     public static async Task<string> HistoryJsonAsync(string root, string? package)
     {
@@ -433,9 +403,7 @@ internal static class ContentPackages
         HistoryResult result = new()
         {
             Package = new() { Id = manifest.Package.Id, Version = manifest.Package.Version },
-            History = manifest.History
-
-            .Select(h => new JsonHistoryRecord
+            History = manifest.History.Select(h => new JsonHistoryRecord
             {
                 Version = h.Version,
                 PreviousVersion = h.PreviousVersion,
@@ -482,14 +450,10 @@ internal static class ContentPackages
             Description = "Immutable arbitrary content snapshot.",
             Authors = { "dotnet-nuget-content" }
         };
-        builder.ContentFiles
-
-            .Add(new ManifestContentFiles { Include = "**/*", BuildAction = "None", CopyToOutput = "true", Flatten = "false" });
+        builder.ContentFiles.Add(new ManifestContentFiles { Include = "**/*", BuildAction = "None", CopyToOutput = "true", Flatten = "false" });
         foreach (var f in manifest.Files)
         {
-            builder.Files
-
-                .Add(new PhysicalPackageFile { SourcePath = Path.Combine(source, f.Path.Replace('/', Path.DirectorySeparatorChar)), TargetPath = Prefix + f.Path });
+            builder.Files.Add(new PhysicalPackageFile { SourcePath = Path.Combine(source, f.Path.Replace('/', Path.DirectorySeparatorChar)), TargetPath = Prefix + f.Path });
         }
 
         var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest, ManifestJsonContext.Default.Manifest);
@@ -587,9 +551,7 @@ internal static class ContentPackages
                 throw new CliException("Manifest package identity/version does not match nuspec.", 1);
             }
 
-            var payload = entries.Select(e => e.Replace('\\', '/')).Where(e => e.StartsWith(Prefix, StringComparison.Ordinal))
-
-                .Select(e => e[Prefix.Length..]).OrderBy(x => x, StringComparer.Ordinal).ToList(); List<ManifestFile> inv = new();
+            var payload = entries.Select(e => e.Replace('\\', '/')).Where(e => e.StartsWith(Prefix, StringComparison.Ordinal)).Select(e => e[Prefix.Length..]).OrderBy(x => x, StringComparer.Ordinal).ToList(); List<ManifestFile> inv = new();
             foreach (var rel in payload) { await using var content = await reader.GetStreamAsync(Prefix + rel, CancellationToken.None); var (size, hash) = await HashAndSizeAsync(content); inv.Add(new() { Path = rel, Size = size, Sha256 = hash }); }
             if (verify && !InventoryEqual(m.Files, inv))
             {
@@ -949,9 +911,7 @@ internal static class ContentPackages
     private static string SafeTarget(string root, string rel)
     {
         var target = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
-        if (!target
-
-            .StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        if (!target.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
             throw new CliException($"Unsafe content path '{rel}'.", 1);
         }
