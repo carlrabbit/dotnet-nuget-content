@@ -56,22 +56,53 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var newPackageBytes = await File.ReadAllBytesAsync(outputPackage);
         var originalPackageBytes = await File.ReadAllBytesAsync(p1);
         var independentPackageBytes = await File.ReadAllBytesAsync(p2);
-        Assert.Equal(1, await Run(root, "workspace", "set", "--alias", "fixtures", "--package", "content/fixtures.pkg.1.1.0.nupkg"));
+        Assert
+
+                .Equal(1, await Run(root, "workspace", "set", "--alias", "fixtures", "--package", "content/fixtures.pkg.1.1.0.nupkg"));
         Assert.Equal(beforeFailure, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
-        Assert.Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
+        Assert
+
+                .Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
         Assert.Equal(newPackageBytes, await File.ReadAllBytesAsync(outputPackage));
         Assert.Equal(originalPackageBytes, await File.ReadAllBytesAsync(p1));
         Assert.Equal(independentPackageBytes, await File.ReadAllBytesAsync(p2));
 
-        Assert.Equal(0, await Run(root, "workspace", "set", "--alias", "fixtures", "--package", "content/fixtures.pkg.1.1.0.nupkg", "--directory", "content/fixtures-1.1.0"));
-        Assert.Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
+        Assert
+
+                .Equal(0,
+    await Run(root,
+                "workspace",
+                "set",
+                "--alias",
+                "fixtures",
+                "--package",
+                "content/fixtures.pkg.1.1.0.nupkg",
+                "--directory",
+                "content/fixtures-1.1.0"));
+        Assert
+
+                .Equal(oldWorkspaceContent, await File.ReadAllBytesAsync(Path.Combine(root, "content", "fixtures", "payload.txt")));
         Assert.False(Directory.Exists(Path.Combine(root, "content", "fixtures-1.1.0")));
-        Assert.Equal("fixtures", JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[0].GetProperty("alias").GetString());
+        Assert
+
+                .Equal("fixtures",
+    JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement
+
+                .GetProperty("members")[0].GetProperty("alias").GetString());
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "fixtures"));
         Assert.Equal("changed", await File.ReadAllTextAsync(Path.Combine(root, "content", "fixtures-1.1.0", "payload.txt")));
         Assert.Equal(0, await Run(root, "workspace", "status", "--alias", "fixtures", "--json"));
-        using (var clean = JsonDocument.Parse(stdout)) Assert.Equal("clean", clean.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
-        Assert.Equal("tools", JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[1].GetProperty("alias").GetString());
+        using (var clean = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("clean", clean.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
+        Assert
+
+                .Equal("tools",
+    JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement
+
+                .GetProperty("members")[1].GetProperty("alias").GetString());
     }
 
     [Fact]
@@ -86,11 +117,8 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var original = await File.ReadAllTextAsync(marker);
         var baselinePath = Path.Combine(root, "content", "identity", ".nuget-content", "manifest.json");
         var baseline = await File.ReadAllBytesAsync(baselinePath);
-        foreach (var (mismatchedPin, outputName) in new[]
-        {
-            (original.Replace("sample.identity", "sample.other", StringComparison.Ordinal), "wrong-id.nupkg"),
-            (original.Replace("1.0.0", "1.1.0", StringComparison.Ordinal), "wrong-version.nupkg")
-        })
+        foreach (var (mismatchedPin, outputName) in [(original.Replace("sample.identity", "sample.other", StringComparison.Ordinal), "wrong-id.nupkg"),
+                (original.Replace("1.0.0", "1.1.0", StringComparison.Ordinal), "wrong-version.nupkg")])
         {
             await File.WriteAllTextAsync(marker, mismatchedPin);
             var output = Path.Combine(root, outputName);
@@ -105,18 +133,35 @@ public sealed class ProjectWorkspaceTests : IDisposable
     [Fact]
     public async Task WorkspaceRootValidationAndPartialUnpackNeverReplaceExistingContent()
     {
-        using (var rootSchema = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0005-project-workspace.schema.json"))))
+        using (var rootSchema = JsonDocument
+
+                .Parse(await File
+
+                .ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0005-project-workspace.schema.json"))))
         {
-            Assert.Equal(new[] { "schemaVersion", "members" }, rootSchema.RootElement.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
+            Assert
+
+                    .Equal(["schemaVersion", "members"],
+                    rootSchema.RootElement.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
             Assert.False(rootSchema.RootElement.GetProperty("additionalProperties").GetBoolean());
         }
-        using (var outputSchema = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0005-workspace-cli-json.schema.json"))))
+        using (var outputSchema = JsonDocument
+
+                .Parse(await File
+
+                .ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0005-workspace-cli-json.schema.json"))))
+        {
             Assert.Equal(3, outputSchema.RootElement.GetProperty("oneOf").GetArrayLength());
+        }
+
         var package = await Package("sample.one", "1.0.0", "one");
         File.Copy(package, Path.Combine(root, "feed", "other.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "init"));
         Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "one", "--package", "feed/sample.one.nupkg"));
-        Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "two", "--package", "feed/other.nupkg", "--directory", "content/two"));
+        Assert
+
+                .Equal(0,
+                await Run(root, "workspace", "add", "--alias", "two", "--package", "feed/other.nupkg", "--directory", "content/two"));
         Directory.CreateDirectory(Path.Combine(root, "content", "two"));
         await File.WriteAllTextAsync(Path.Combine(root, "content", "two", "keep.txt"), "keep");
         Assert.Equal(1, await Run(root, "workspace", "unpack", "--all"));
@@ -125,16 +170,44 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(root, "content", "one")));
 
         var marker = Path.Combine(root, "nuget-content.json"); var old = await File.ReadAllBytesAsync(marker);
-        await File.WriteAllTextAsync(marker, """{"schemaVersion":1,"members":[{"alias":"One","packageId":"sample.one","version":"1.0.0","packageFile":"feed/sample.one.nupkg","directory":"content/One"},{"alias":"one","packageId":"sample.one","version":"1.0.0","packageFile":"feed/other.nupkg","directory":"content/other"}]}""");
+        await File
+
+                .WriteAllTextAsync(marker,
+                """{"schemaVersion":1,"members":[{"alias":"One","packageId":"sample.one","version":"1.0.0","packageFile":"feed/sample.one.nupkg","directory":"content/One"},{"alias":"one","packageId":"sample.one","version":"1.0.0","packageFile":"feed/other.nupkg","directory":"content/other"}]}""");
         Assert.Equal(1, await Run(root, "workspace", "list"));
         Assert.Empty(stdout);
         Assert.Contains("Duplicate workspace alias", stderr);
         await File.WriteAllBytesAsync(marker, old);
-        Assert.Equal(1, await Run(root, "workspace", "add", "--alias", "nested", "--package", "feed/sample.one.nupkg", "--directory", "content/one/deep"));
+        Assert
+
+                .Equal(1,
+    await Run(root,
+                "workspace",
+                "add",
+                "--alias",
+                "nested",
+                "--package",
+                "feed/sample.one.nupkg",
+                "--directory",
+                "content/one/deep"));
         Assert.Equal(old, await File.ReadAllBytesAsync(marker));
-        Assert.Equal(1, await Run(root, "workspace", "add", "--alias", "case", "--package", "feed/sample.one.nupkg", "--directory", "CONTENT/ONE"));
+        Assert
+
+                .Equal(1,
+                await Run(root, "workspace", "add", "--alias", "case", "--package", "feed/sample.one.nupkg", "--directory", "CONTENT/ONE"));
         Assert.Equal(old, await File.ReadAllBytesAsync(marker));
-        Assert.Equal(1, await Run(root, "workspace", "add", "--alias", "absolute", "--package", "feed/sample.one.nupkg", "--directory", Path.Combine(root, "absolute")));
+        Assert
+
+                .Equal(1,
+    await Run(root,
+                "workspace",
+                "add",
+                "--alias",
+                "absolute",
+                "--package",
+                "feed/sample.one.nupkg",
+                "--directory",
+                Path.Combine(root, "absolute")));
         Assert.Equal(old, await File.ReadAllBytesAsync(marker));
         var escapeExit = await Run(root, "workspace", "add", "--alias", "escape", "--package", "feed/sample.one.nupkg", "--directory", "../outside");
         Assert.True(escapeExit == 1, $"exit={escapeExit}; stdout={stdout}; stderr={stderr}");
@@ -153,19 +226,33 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var member = Path.Combine(root, "content", "state"); var saved = member + "-saved";
         Directory.Move(member, saved);
         Assert.Equal(0, await Run(root, "workspace", "status", "--json"));
-        using (var missing = JsonDocument.Parse(stdout)) Assert.Equal("missing", missing.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var missing = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("missing", missing.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         Directory.Move(saved, member);
 
         var baselinePath = Path.Combine(member, ".nuget-content", "manifest.json"); var baseline = await File.ReadAllBytesAsync(baselinePath);
         await File.WriteAllTextAsync(baselinePath, "{}");
         Assert.Equal(1, await Run(root, "workspace", "status", "--json"));
-        using (var corrupt = JsonDocument.Parse(stdout)) Assert.Equal("corrupt", corrupt.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var corrupt = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("corrupt", corrupt.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         await File.WriteAllBytesAsync(baselinePath, baseline);
 
         var markerPath = Path.Combine(root, "nuget-content.json"); var marker = await File.ReadAllTextAsync(markerPath);
-        await File.WriteAllTextAsync(markerPath, marker.Replace("\"version\":\"1.0.0\"", "\"version\":\"1.1.0\"", StringComparison.Ordinal));
+        await File
+
+                .WriteAllTextAsync(markerPath, marker.Replace("\"version\":\"1.0.0\"", "\"version\":\"1.1.0\"", StringComparison.Ordinal));
         Assert.Equal(1, await Run(root, "workspace", "status", "--json"));
-        using (var mismatched = JsonDocument.Parse(stdout)) Assert.Equal("mismatched", mismatched.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var mismatched = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("mismatched", mismatched.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         await File.WriteAllTextAsync(markerPath, marker);
     }
 
@@ -177,34 +264,59 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Equal(0, await Run(root, "workspace", "init"));
         Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "shared", "--package", "feed/example.shared.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "central", "--package", "feed/central.only.nupkg"));
-        await File.WriteAllTextAsync(Path.Combine(root, "Directory.Packages.props"), """
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Directory.Packages.props"),
+                """
             <Project><ItemGroup><PackageVersion Include="example.shared" Version="3.1.0" /><PackageVersion Include="central.only" Version="1.2.0" /></ItemGroup></Project>
             """);
         var project = Path.Combine(root, "App.csproj");
-        await File.WriteAllTextAsync(project, """
+        await File
+
+                .WriteAllTextAsync(project,
+                """
             <Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="example.shared" /><PackageReference Include="dynamic.pkg" Version="$(DynamicVersion)" /></ItemGroup></Project>
             """);
         var assets = Path.Combine(root, "obj", "project.assets.json"); Directory.CreateDirectory(Path.GetDirectoryName(assets)!);
-        await File.WriteAllTextAsync(assets, """
+        await File
+
+                .WriteAllTextAsync(assets,
+                """
             {"version":3,"libraries":{"example.shared/3.1.0":{"type":"package"},"other/1.0.0":{"type":"package"}}}
             """);
-        Directory.CreateDirectory(Path.Combine(root, ".git")); await File.WriteAllTextAsync(Path.Combine(root, ".git", "Ignored.csproj"), "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "obj", "Ignored.csproj"), "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
-        Directory.CreateDirectory(Path.Combine(root, "content", "shared")); await File.WriteAllTextAsync(Path.Combine(root, "content", "shared", "Generated.csproj"), "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
+        Directory.CreateDirectory(Path.Combine(root, ".git")); await File
+
+                .WriteAllTextAsync(Path.Combine(root, ".git", "Ignored.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "obj", "Ignored.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
+        Directory.CreateDirectory(Path.Combine(root, "content", "shared")); await File
+
+                .WriteAllTextAsync(Path.Combine(root, "content", "shared", "Generated.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"example.shared\" /></ItemGroup></Project>");
 
         var usageExit = await Run(root, "workspace", "usage", "--json");
         Assert.True(usageExit == 0, $"exit={usageExit}; stdout={stdout}; stderr={stderr}");
         using var json = JsonDocument.Parse(stdout);
-        var member = Assert.Single(json.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "shared");
+        var member = Assert
+
+                .Single(json.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "shared");
         Assert.Equal("shared", member.GetProperty("alias").GetString());
         var use = Assert.Single(member.GetProperty("useSites").EnumerateArray());
         Assert.Equal("App.csproj", use.GetProperty("path").GetString());
         Assert.Equal("directPackageReferenceWithCentralVersion", use.GetProperty("classification").GetString());
-        Assert.Equal("Directory.Packages.props", Assert.Single(member.GetProperty("centralVersionDeclarations").EnumerateArray()).GetProperty("path").GetString());
+        Assert
+
+                .Equal("Directory.Packages.props",
+                Assert.Single(member.GetProperty("centralVersionDeclarations").EnumerateArray()).GetProperty("path").GetString());
         var evidence = Assert.Single(member.GetProperty("previousAssetsEvidence").EnumerateArray());
         Assert.Equal("previousRestoreUnknownFreshness", evidence.GetProperty("state").GetString());
         Assert.Equal("3.1.0", evidence.GetProperty("version").GetString());
-        var centralOnly = Assert.Single(json.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "central");
+        var centralOnly = Assert
+
+                .Single(json.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "central");
         Assert.Equal("central", centralOnly.GetProperty("alias").GetString());
         Assert.Empty(centralOnly.GetProperty("useSites").EnumerateArray());
         Assert.Single(centralOnly.GetProperty("centralVersionDeclarations").EnumerateArray());
@@ -222,7 +334,10 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var result = await Run(root, "workspace", "usage", "--json");
         Assert.Equal(1, result);
         using var json = JsonDocument.Parse(stdout);
-        Assert.Contains(json.RootElement.GetProperty("diagnostics").EnumerateArray(), d => d.GetString()!.Contains("Traversal depth limit", StringComparison.Ordinal));
+        Assert
+
+                .Contains(json.RootElement.GetProperty("diagnostics").EnumerateArray(),
+                d => d.GetString()!.Contains("Traversal depth limit", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -254,11 +369,15 @@ public sealed class ProjectWorkspaceTests : IDisposable
 
         Assert.Equal(0, await Run(root, "workspace", "advance", "--alias", "advance", "--patch"));
         using var marker = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json")));
-        var advanced = Assert.Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "advance");
+        var advanced = Assert
+
+                .Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "advance");
         Assert.Equal("1.0.1", advanced.GetProperty("version").GetString());
         Assert.Equal("content/sample.advance.1.0.1.nupkg", advanced.GetProperty("packageFile").GetString());
         Assert.Equal("content/advance", advanced.GetProperty("directory").GetString());
-        var otherPin = Assert.Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other");
+        var otherPin = Assert
+
+                .Single(marker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "other");
         Assert.Equal("2.0.0", otherPin.GetProperty("version").GetString());
         Assert.Equal("feed/sample.other.nupkg", otherPin.GetProperty("packageFile").GetString());
         Assert.Equal("content/other", otherPin.GetProperty("directory").GetString());
@@ -273,12 +392,17 @@ public sealed class ProjectWorkspaceTests : IDisposable
 
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--alias", "advance", "--json"));
         using (var inspection = JsonDocument.Parse(stdout))
+        {
             Assert.Equal("missing", inspection.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "advance"));
         Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(extracted, "payload.txt")));
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--alias", "advance", "--json"));
         using (var inspection = JsonDocument.Parse(stdout))
+        {
             Assert.Equal("clean", inspection.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
 
         await File.WriteAllTextAsync(Path.Combine(extracted, "payload.txt"), "second edit");
         FileStream? lockedPayload = null;
@@ -291,7 +415,10 @@ public sealed class ProjectWorkspaceTests : IDisposable
             Assert.Contains("content/advance", stderr);
             Assert.True(File.Exists(Path.Combine(root, "content", "sample.advance.1.0.2.nupkg")));
             using var partialMarker = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json")));
-            var partialPin = Assert.Single(partialMarker.RootElement.GetProperty("members").EnumerateArray(), x => x.GetProperty("alias").GetString() == "advance");
+            var partialPin = Assert
+
+                    .Single(partialMarker.RootElement.GetProperty("members").EnumerateArray(),
+                    x => x.GetProperty("alias").GetString() == "advance");
             Assert.Equal("1.0.2", partialPin.GetProperty("version").GetString());
             Assert.Equal("content/sample.advance.1.0.2.nupkg", partialPin.GetProperty("packageFile").GetString());
             Assert.Equal("content/advance", partialPin.GetProperty("directory").GetString());
@@ -347,7 +474,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var packageBytes = await File.ReadAllBytesAsync(package); var oldCopyBytes = await File.ReadAllBytesAsync(Path.Combine(oldCopy, "payload.txt"));
         await File.WriteAllTextAsync(Path.Combine(root, "content", "cleanup", "payload.txt"), "advance");
         Assert.Equal(0, await Run(root, "workspace", "advance", "--alias", "cleanup", "--patch"));
-        var oldRel = "content/cleanup-old";
+        string oldRel = "content/cleanup-old";
         var markerBytes = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
         Assert.Equal(0, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", oldRel, "--json"));
         using (var preview = JsonDocument.Parse(stdout)) { Assert.Equal("eligible", preview.RootElement.GetProperty("state").GetString()); Assert.False(preview.RootElement.GetProperty("applied").GetBoolean()); }
@@ -356,26 +483,37 @@ public sealed class ProjectWorkspaceTests : IDisposable
         ProjectWorkspace.CleanupDeleteHook = _ => Task.FromException(new IOException("injected delete failure"));
         try
         {
-            Assert.Equal(1, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", oldRel, "--apply", "--json"));
+            Assert
+
+                    .Equal(1, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", oldRel, "--apply", "--json"));
             using var failedDelete = JsonDocument.Parse(stdout);
             Assert.Equal("partial", failedDelete.RootElement.GetProperty("state").GetString());
             Assert.False(failedDelete.RootElement.GetProperty("applied").GetBoolean());
             Assert.True(Directory.Exists(oldCopy));
         }
         finally { ProjectWorkspace.CleanupDeleteHook = null; }
-        Assert.Equal(0, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", oldRel, "--apply", "--json"));
+        Assert
+
+                .Equal(0, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", oldRel, "--apply", "--json"));
         using (var removed = JsonDocument.Parse(stdout)) { Assert.Equal("removed", removed.RootElement.GetProperty("state").GetString()); Assert.True(removed.RootElement.GetProperty("applied").GetBoolean()); }
         Assert.False(Directory.Exists(oldCopy)); Assert.Equal(packageBytes, await File.ReadAllBytesAsync(package));
 
-        var current = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement.GetProperty("members")[0].GetProperty("directory").GetString()!;
+        var current = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "nuget-content.json"))).RootElement
+
+                .GetProperty("members")[0].GetProperty("directory").GetString()!;
         var modifiedOld = Path.Combine(root, "content", "cleanup");
-        Assert.Equal(1, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", "content/cleanup", "--apply"));
+        Assert
+
+                .Equal(1, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", "content/cleanup", "--apply"));
         Assert.False(Directory.Exists(modifiedOld));
 
         var modifiedSibling = Path.Combine(root, "content", "cleanup-modified");
         await ContentPackages.UnpackAsync(package, modifiedSibling, null);
         await File.WriteAllTextAsync(Path.Combine(modifiedSibling, "payload.txt"), "user edits");
-        Assert.Equal(1, await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", "content/cleanup-modified", "--apply", "--json"));
+        Assert
+
+                .Equal(1,
+                await Run(root, "workspace", "cleanup", "--alias", "cleanup", "--directory", "content/cleanup-modified", "--apply", "--json"));
         using (var blocked = JsonDocument.Parse(stdout)) { Assert.Equal("blocked", blocked.RootElement.GetProperty("state").GetString()); Assert.False(blocked.RootElement.GetProperty("applied").GetBoolean()); }
         Assert.True(Directory.Exists(modifiedSibling));
         Assert.Equal("user edits", await File.ReadAllTextAsync(Path.Combine(modifiedSibling, "payload.txt")));
@@ -387,27 +525,35 @@ public sealed class ProjectWorkspaceTests : IDisposable
     {
         await Package("sample.preflight", "1.0.0", "baseline");
         Assert.Equal(0, await Run(root, "workspace", "init"));
-        Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "preflight", "--package", "feed/sample.preflight.nupkg"));
+        Assert
+
+                .Equal(0, await Run(root, "workspace", "add", "--alias", "preflight", "--package", "feed/sample.preflight.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "preflight"));
         var markerPath = Path.Combine(root, "nuget-content.json"); var marker = await File.ReadAllBytesAsync(markerPath);
         Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch"));
         Assert.Contains("unchanged", stderr, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(marker, await File.ReadAllBytesAsync(markerPath));
-        await File.WriteAllTextAsync(markerPath, System.Text.Encoding.UTF8.GetString(marker).Replace("1.0.0", "1.0.2", StringComparison.Ordinal));
+        await File
+
+                .WriteAllTextAsync(markerPath, System.Text.Encoding.UTF8.GetString(marker).Replace("1.0.0", "1.0.2", StringComparison.Ordinal));
         Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch"));
         Assert.Contains("mismatch", stderr, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(Path.Combine(root, "content", "sample.preflight.1.0.3.nupkg")));
         await File.WriteAllBytesAsync(markerPath, marker);
         Assert.Equal(2, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--version", "2.0.0"));
         Assert.Equal(marker, await File.ReadAllBytesAsync(markerPath));
-        Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--directory", "../outside"));
+        Assert
+
+                .Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--directory", "../outside"));
         Assert.Equal(marker, await File.ReadAllBytesAsync(markerPath));
         var outside = Path.Combine(Directory.GetParent(root)!.FullName, "preflight-outside.nupkg");
         await File.WriteAllTextAsync(Path.Combine(root, "content", "preflight", "payload.txt"), "changed");
         Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--output", outside));
         Assert.False(File.Exists(outside)); Assert.Equal(marker, await File.ReadAllBytesAsync(markerPath));
         var existingOutput = Path.Combine(root, "feed", "existing.nupkg"); await File.WriteAllTextAsync(existingOutput, "keep");
-        Assert.Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--output", "feed/existing.nupkg"));
+        Assert
+
+                .Equal(1, await Run(root, "workspace", "advance", "--alias", "preflight", "--patch", "--output", "feed/existing.nupkg"));
         Assert.Equal("keep", await File.ReadAllTextAsync(existingOutput)); Assert.Equal(marker, await File.ReadAllBytesAsync(markerPath));
         var existingDir = Path.Combine(root, "content", "preflight-1.0.1"); Directory.CreateDirectory(existingDir);
         await File.WriteAllTextAsync(Path.Combine(existingDir, "keep.txt"), "keep");
@@ -433,8 +579,12 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Directory.CreateDirectory(outside);
         var sentinel = Path.Combine(outside, "preserve.txt"); await File.WriteAllTextAsync(sentinel, "outside remains unchanged");
         var junction = Path.Combine(root, "output-link");
-        var linkInfo = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in new[] { "/c", "mklink", "/J", junction, outside }) linkInfo.ArgumentList.Add(argument);
+        System.Diagnostics.ProcessStartInfo linkInfo = new("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in ["/c", "mklink", "/J", junction, outside])
+        {
+            linkInfo.ArgumentList.Add(argument);
+        }
+
         using var linkProcess = System.Diagnostics.Process.Start(linkInfo)!; await linkProcess.WaitForExitAsync();
         Assert.Equal(0, linkProcess.ExitCode);
         var output = Path.Combine(junction, "sample.junction.1.0.1.nupkg");
@@ -442,7 +592,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Contains("reparse point", stderr, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(output));
         Assert.Equal("outside remains unchanged", await File.ReadAllTextAsync(sentinel));
-        Assert.Equal(new[] { "preserve.txt" }, Directory.GetFiles(outside).Select(Path.GetFileName));
+        Assert.Equal(["preserve.txt"], Directory.GetFiles(outside).Select(Path.GetFileName));
         Assert.Equal(marker, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
         Assert.Equal(baseline, await File.ReadAllBytesAsync(Path.Combine(member, ".nuget-content", "manifest.json")));
         Assert.Equal("changed", await File.ReadAllTextAsync(Path.Combine(member, "payload.txt")));
@@ -457,39 +607,83 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Equal(0, await Run(root, "workspace", "init"));
         Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "inspect", "--package", "feed/sample.inspect.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "inspect"));
-        await File.WriteAllTextAsync(Path.Combine(root, "Directory.Packages.props"), "<Project><ItemGroup><PackageVersion Include=\"sample.inspect\" Version=\"2.0.0\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Direct.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" Version=\"3.0.0\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Central.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Dynamic.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" Version=\"$(SharedVersion)\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Directory.Packages.props"),
+                "<Project><ItemGroup><PackageVersion Include=\"sample.inspect\" Version=\"2.0.0\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Direct.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" Version=\"3.0.0\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Central.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Dynamic.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.inspect\" Version=\"$(SharedVersion)\" /></ItemGroup></Project>");
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--all", "--json"));
         using (var json = JsonDocument.Parse(stdout))
         {
             Assert.Equal("workspaceInspect", json.RootElement.GetProperty("kind").GetString());
             var consumers = json.RootElement.GetProperty("members")[0].GetProperty("consumers").EnumerateArray().ToArray();
-            Assert.Contains(consumers, x => x.GetProperty("kind").GetString() == "direct" && x.GetProperty("state").GetString() == "drift" && x.GetProperty("version").GetString() == "3.0.0");
-            Assert.Contains(consumers, x => x.GetProperty("kind").GetString() == "central" && x.GetProperty("state").GetString() == "drift" && x.GetProperty("version").GetString() == "2.0.0");
+            Assert
+
+                    .Contains(consumers,
+    x => x.GetProperty("kind").GetString() == "direct" && x.GetProperty("state").GetString() == "drift" &&
+                    x.GetProperty("version").GetString() == "3.0.0");
+            Assert
+
+                    .Contains(consumers,
+    x => x.GetProperty("kind").GetString() == "central" && x.GetProperty("state").GetString() == "drift" &&
+                    x.GetProperty("version").GetString() == "2.0.0");
             Assert.Contains(consumers, x => x.GetProperty("state").GetString() == "dynamic");
         }
         var memberPath = Path.Combine(root, "content", "inspect"); var markerPath = Path.Combine(root, "nuget-content.json");
         var markerBytes = await File.ReadAllBytesAsync(markerPath); var moved = memberPath + "-moved";
         Directory.Move(memberPath, moved);
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--alias", "inspect", "--json"));
-        using (var missing = JsonDocument.Parse(stdout)) Assert.Equal("missing", missing.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var missing = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("missing", missing.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         Directory.Move(moved, memberPath);
         var baselinePath = Path.Combine(memberPath, ".nuget-content", "manifest.json"); var baselineBytes = await File.ReadAllBytesAsync(baselinePath);
         await File.WriteAllTextAsync(baselinePath, "{}");
         Assert.Equal(1, await Run(root, "workspace", "inspect", "--alias", "inspect", "--json"));
-        using (var corrupt = JsonDocument.Parse(stdout)) Assert.Equal("corrupt", corrupt.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var corrupt = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("corrupt", corrupt.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         await File.WriteAllBytesAsync(baselinePath, baselineBytes);
-        await File.WriteAllTextAsync(markerPath, System.Text.Encoding.UTF8.GetString(markerBytes).Replace("1.0.0", "1.1.0", StringComparison.Ordinal));
+        await File
+
+                .WriteAllTextAsync(markerPath, System.Text.Encoding.UTF8.GetString(markerBytes).Replace("1.0.0", "1.1.0", StringComparison.Ordinal));
         Assert.Equal(1, await Run(root, "workspace", "inspect", "--alias", "inspect", "--json"));
-        using (var mismatched = JsonDocument.Parse(stdout)) Assert.Equal("mismatched", mismatched.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        using (var mismatched = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("mismatched", mismatched.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
         await File.WriteAllBytesAsync(markerPath, markerBytes);
         await File.WriteAllTextAsync(Path.Combine(memberPath, "payload.txt"), "edited");
         Assert.Equal(0, await Run(root, "workspace", "inspect", "--alias", "inspect", "--json"));
-        using (var modified = JsonDocument.Parse(stdout)) Assert.Equal("modified", modified.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
-        using var schema = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0007-workspace-inspect.schema.json")));
-        Assert.Equal(1, schema.RootElement.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
+        using (var modified = JsonDocument.Parse(stdout))
+        {
+            Assert.Equal("modified", modified.RootElement.GetProperty("members")[0].GetProperty("state").GetString());
+        }
+
+        using var schema = JsonDocument
+
+                .Parse(await File
+
+                .ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/specs/M0007-workspace-inspect.schema.json")));
+        Assert
+
+                .Equal(1, schema.RootElement.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
     }
 
     [Fact]
@@ -497,25 +691,53 @@ public sealed class ProjectWorkspaceTests : IDisposable
     {
         await Package("sample.ambiguous", "1.0.0", "payload");
         Assert.Equal(0, await Run(root, "workspace", "init"));
-        Assert.Equal(0, await Run(root, "workspace", "add", "--alias", "ambiguous", "--package", "feed/sample.ambiguous.nupkg"));
+        Assert
+
+                .Equal(0, await Run(root, "workspace", "add", "--alias", "ambiguous", "--package", "feed/sample.ambiguous.nupkg"));
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "ambiguous"));
-        await File.WriteAllTextAsync(Path.Combine(root, "Conditional.csproj"), "<Project><ItemGroup Condition=\"'$(Configuration)' == 'Release'\"><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Duplicate.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /><PackageReference Include=\"sample.ambiguous\" Version=\"2.0.0\" /></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Malformed.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\"></Project>");
-        await File.WriteAllTextAsync(Path.Combine(root, "Changing.csproj"), "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Conditional.csproj"),
+                "<Project><ItemGroup Condition=\"'$(Configuration)' == 'Release'\"><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Duplicate.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /><PackageReference Include=\"sample.ambiguous\" Version=\"2.0.0\" /></ItemGroup></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Malformed.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\"></Project>");
+        await File
+
+                .WriteAllTextAsync(Path.Combine(root, "Changing.csproj"),
+                "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"1.0.0\" /></ItemGroup></Project>");
         var marker = await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json"));
         var payload = await File.ReadAllBytesAsync(Path.Combine(root, "content", "ambiguous", "payload.txt"));
         ProjectWorkspace.InspectSourceReadHook = async path =>
         {
-            if (Path.GetFileName(path) == "Changing.csproj") await File.WriteAllTextAsync(path, "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"2.0.0\" /></ItemGroup></Project>");
+            if (Path.GetFileName(path) == "Changing.csproj")
+            {
+                await File
+
+                        .WriteAllTextAsync(path, "<Project><ItemGroup><PackageReference Include=\"sample.ambiguous\" Version=\"2.0.0\" /></ItemGroup></Project>");
+            }
         };
         try { Assert.Equal(1, await Run(root, "workspace", "inspect", "--alias", "ambiguous", "--json")); }
         finally { ProjectWorkspace.InspectSourceReadHook = null; }
         using var json = JsonDocument.Parse(stdout);
         var consumers = json.RootElement.GetProperty("members")[0].GetProperty("consumers").EnumerateArray().ToArray();
-        Assert.Contains(consumers, x => x.GetProperty("path").GetString() == "Conditional.csproj" && x.GetProperty("state").GetString() == "unresolved");
-        Assert.Contains(consumers, x => x.GetProperty("path").GetString() == "Duplicate.csproj" && x.GetProperty("state").GetString() == "unresolved");
-        Assert.Contains(consumers, x => x.GetProperty("path").GetString() == "Changing.csproj" && x.GetProperty("state").GetString() == "unresolved");
+        Assert
+
+                .Contains(consumers,
+                x => x.GetProperty("path").GetString() == "Conditional.csproj" && x.GetProperty("state").GetString() == "unresolved");
+        Assert
+
+                .Contains(consumers,
+                x => x.GetProperty("path").GetString() == "Duplicate.csproj" && x.GetProperty("state").GetString() == "unresolved");
+        Assert
+
+                .Contains(consumers,
+                x => x.GetProperty("path").GetString() == "Changing.csproj" && x.GetProperty("state").GetString() == "unresolved");
         var diagnostics = json.RootElement.GetProperty("diagnostics").EnumerateArray().Select(x => x.GetString()).ToArray();
         Assert.Contains(diagnostics, x => x!.Contains("Conditional package reference", StringComparison.Ordinal));
         Assert.Contains(diagnostics, x => x!.Contains("Ambiguous package references", StringComparison.Ordinal));
@@ -536,21 +758,42 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var active = Path.Combine(root, "content", "link");
         await File.WriteAllTextAsync(Path.Combine(active, "payload.txt"), "next");
         Assert.Equal(0, await Run(root, "workspace", "pack", "--alias", "link", "--patch"));
-        Assert.Equal(0, await Run(root, "workspace", "set", "--alias", "link", "--package", "content/sample.symlink.1.0.1.nupkg", "--directory", "content/link-1.0.1"));
+        Assert
+
+                .Equal(0,
+    await Run(root,
+                "workspace",
+                "set",
+                "--alias",
+                "link",
+                "--package",
+                "content/sample.symlink.1.0.1.nupkg",
+                "--directory",
+                "content/link-1.0.1"));
         Assert.Equal(0, await Run(root, "workspace", "unpack", "--alias", "link"));
         var target = Path.Combine(root, "content", "link-old"); await ContentPackages.UnpackAsync(package, target, null);
         var outside = Path.Combine(root, "outside-target"); Directory.CreateDirectory(outside);
         var outsideFile = Path.Combine(outside, "keep.txt"); await File.WriteAllTextAsync(outsideFile, "preserve");
         var junction = Path.Combine(target, "linked-directory");
-        var linkInfo = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in new[] { "/c", "mklink", "/J", junction, outside }) linkInfo.ArgumentList.Add(argument);
+        System.Diagnostics.ProcessStartInfo linkInfo = new("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in ["/c", "mklink", "/J", junction, outside])
+        {
+            linkInfo.ArgumentList.Add(argument);
+        }
+
         using var linkProcess = System.Diagnostics.Process.Start(linkInfo)!; await linkProcess.WaitForExitAsync();
         Assert.Equal(0, linkProcess.ExitCode);
-        Assert.Equal(1, await Run(root, "workspace", "cleanup", "--alias", "link", "--directory", "content/link-old", "--apply"));
+        Assert
+
+                .Equal(1, await Run(root, "workspace", "cleanup", "--alias", "link", "--directory", "content/link-old", "--apply"));
         Assert.True(Directory.Exists(target)); Assert.Equal("preserve", await File.ReadAllTextAsync(outsideFile));
     }
 
-    private async Task<string> Package(string id, string version, string content)
+    private async Task<string> Package(
+            string id,
+            string version,
+            string content
+        )
     {
         var source = Path.Combine(root, "source-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(source);
         await File.WriteAllTextAsync(Path.Combine(source, "payload.txt"), content);
@@ -564,7 +807,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
     private static async Task<int> Run(string cwd, params string[] args)
     {
         var oldOut = Console.Out; var oldErr = Console.Error; var oldCwd = Environment.CurrentDirectory;
-        using var output = new StringWriter(); using var error = new StringWriter();
+        using StringWriter output = new(); using StringWriter error = new();
         try
         {
             Console.SetOut(output); Console.SetError(error); Environment.CurrentDirectory = cwd;
@@ -572,5 +815,11 @@ public sealed class ProjectWorkspaceTests : IDisposable
         }
         finally { Console.SetOut(oldOut); Console.SetError(oldErr); Environment.CurrentDirectory = oldCwd; }
     }
-    public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    public void Dispose()
+    {
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }
