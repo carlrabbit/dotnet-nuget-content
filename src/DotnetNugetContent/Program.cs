@@ -739,7 +739,7 @@ internal static class ContentPackages
 
             var changes = record.GetProperty("changes");
             ValidateObject(changes, "history[].changes", ["added", "modified", "deleted"]);
-            foreach (var name in ["added", "modified", "deleted"])
+            foreach (var name in new[] { "added", "modified", "deleted" })
             {
                 var paths = changes.GetProperty(name);
                 RequireArray(paths, $"history[].changes.{name}");
@@ -878,7 +878,7 @@ internal static class ContentPackages
         foreach (var h in m.History)
         {
             HashSet<string> all = new(StringComparer.OrdinalIgnoreCase);
-            foreach (var list in [h.Changes.Added, h.Changes.Modified, h.Changes.Deleted])
+            foreach (var list in new[] { h.Changes.Added, h.Changes.Modified, h.Changes.Deleted })
             {
                 string? p = null;
                 foreach (var x in list)

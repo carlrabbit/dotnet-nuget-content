@@ -114,7 +114,7 @@ public sealed class PackageLifecycleTests : IDisposable
         using (var stream = File.Create(duplicate))
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
         {
-            foreach (var body in ["first", "second"])
+            foreach (var body in new[] { "first", "second" })
             {
                 var entry = zip.CreateEntry("contentFiles/any/any/same.txt");
                 await using var output = entry.Open();
@@ -155,7 +155,7 @@ public sealed class PackageLifecycleTests : IDisposable
 
             var payload = zip.CreateEntry("contentFiles/any/any/../../../../escaped.txt");
             await using var output = payload.Open();
-            await output.WriteAsync([65]);
+            await output.WriteAsync(new byte[] { 65 });
         }
         var destination = Path.Combine(_root, "malicious-out");
         await Assert.ThrowsAsync<CliException>(() => ContentPackages.UnpackAsync(malicious, destination, null));

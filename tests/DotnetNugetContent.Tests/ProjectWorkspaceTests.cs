@@ -117,8 +117,11 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var original = await File.ReadAllTextAsync(marker);
         var baselinePath = Path.Combine(root, "content", "identity", ".nuget-content", "manifest.json");
         var baseline = await File.ReadAllBytesAsync(baselinePath);
-        foreach (var (mismatchedPin, outputName) in [(original.Replace("sample.identity", "sample.other", StringComparison.Ordinal), "wrong-id.nupkg"),
-                (original.Replace("1.0.0", "1.1.0", StringComparison.Ordinal), "wrong-version.nupkg")])
+        foreach (var (mismatchedPin, outputName) in new[]
+        {
+            (original.Replace("sample.identity", "sample.other", StringComparison.Ordinal), "wrong-id.nupkg"),
+            (original.Replace("1.0.0", "1.1.0", StringComparison.Ordinal), "wrong-version.nupkg")
+        })
         {
             await File.WriteAllTextAsync(marker, mismatchedPin);
             var output = Path.Combine(root, outputName);
@@ -141,7 +144,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         {
             Assert
 
-                    .Equal(["schemaVersion", "members"],
+                    .Equal(new[] { "schemaVersion", "members" },
                     rootSchema.RootElement.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
             Assert.False(rootSchema.RootElement.GetProperty("additionalProperties").GetBoolean());
         }
@@ -580,7 +583,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var sentinel = Path.Combine(outside, "preserve.txt"); await File.WriteAllTextAsync(sentinel, "outside remains unchanged");
         var junction = Path.Combine(root, "output-link");
         System.Diagnostics.ProcessStartInfo linkInfo = new("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in ["/c", "mklink", "/J", junction, outside])
+        foreach (var argument in new[] { "/c", "mklink", "/J", junction, outside })
         {
             linkInfo.ArgumentList.Add(argument);
         }
@@ -592,7 +595,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         Assert.Contains("reparse point", stderr, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(output));
         Assert.Equal("outside remains unchanged", await File.ReadAllTextAsync(sentinel));
-        Assert.Equal(["preserve.txt"], Directory.GetFiles(outside).Select(Path.GetFileName));
+        Assert.Equal(new[] { "preserve.txt" }, Directory.GetFiles(outside).Select(Path.GetFileName));
         Assert.Equal(marker, await File.ReadAllBytesAsync(Path.Combine(root, "nuget-content.json")));
         Assert.Equal(baseline, await File.ReadAllBytesAsync(Path.Combine(member, ".nuget-content", "manifest.json")));
         Assert.Equal("changed", await File.ReadAllTextAsync(Path.Combine(member, "payload.txt")));
@@ -776,7 +779,7 @@ public sealed class ProjectWorkspaceTests : IDisposable
         var outsideFile = Path.Combine(outside, "keep.txt"); await File.WriteAllTextAsync(outsideFile, "preserve");
         var junction = Path.Combine(target, "linked-directory");
         System.Diagnostics.ProcessStartInfo linkInfo = new("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in ["/c", "mklink", "/J", junction, outside])
+        foreach (var argument in new[] { "/c", "mklink", "/J", junction, outside })
         {
             linkInfo.ArgumentList.Add(argument);
         }

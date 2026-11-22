@@ -65,7 +65,7 @@ public sealed class ManagedContentTests : IDisposable
         var p2 = Path.Combine(root, "sample.repack.1.0.2.nupkg");
         Assert.Equal(0, second.ExitCode); Assert.True(File.Exists(p2)); Assert.False(Directory.Exists(workspace));
         var packaged = await ContentPackages.ReadPackageForWorkspaceAsync(p2);
-        Assert.Equal(["1.0.0", "1.0.1", "1.0.2"], packaged.History.Select(h => h.Version).ToArray());
+        Assert.Equal(new[] { "1.0.0", "1.0.1", "1.0.2" }, packaged.History.Select(h => h.Version).ToArray());
         Assert.Equal(originalHash, await ContentPackages.Sha256Async(initial));
 
         await ContentPackages.UnpackAsync(p2, workspace, null);
@@ -152,12 +152,12 @@ public sealed class ManagedContentTests : IDisposable
             Assert.Equal(1, top.GetProperty("properties").GetProperty("schemaVersion").GetProperty("const").GetInt32());
             Assert
 
-                    .Equal(["schemaVersion", "package", "files", "history"],
+                    .Equal(new[] { "schemaVersion", "package", "files", "history" },
                     top.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray());
             Assert.False(top.GetProperty("additionalProperties").GetBoolean());
             Assert
 
-                    .Equal(["id", "version"],
+                    .Equal(new[] { "id", "version" },
     top.GetProperty("properties").GetProperty("package").GetProperty("required").EnumerateArray()
 
                     .Select(x => x.GetString()).ToArray());

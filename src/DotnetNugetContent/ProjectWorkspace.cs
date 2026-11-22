@@ -1307,7 +1307,7 @@ internal static class ProjectWorkspace
         foreach (var member in members.EnumerateArray())
         {
             CheckObject(member, "members[]", ["alias", "packageId", "version", "packageFile", "directory"]);
-            foreach (var p in ["alias", "packageId", "version", "packageFile", "directory"])
+            foreach (var p in new[] { "alias", "packageId", "version", "packageFile", "directory" })
             {
                 if (member.GetProperty(p).ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(member.GetProperty(p).GetString()))
                 {
